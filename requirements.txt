@@ -1,0 +1,4 @@
+2captcha-python
+requests
+colorama
+names
