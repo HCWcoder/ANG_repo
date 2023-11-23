@@ -10,26 +10,24 @@ import ctypes
 
 from colorama import init, Fore, Style
 from requests import Session
-import time
-import mysql.connector
 
-#from send_vote_argparser import args
+
+from send_vote_argparser import args
 
 
 uuid4 = lambda: str(_uuid4())
 
 
 START = dt.now()
-COUNTRY = ''
 VOTES_SEND = 0
 ERRORS_COUNT = 0
 USED_ACCOUNTS = []
 LOCK_OBJECT = Lock()
-VOTES_NEED = 0
+VOTES_NEED = args.votes
 LOCK_OBJECT_FOR_PRINT = Lock()
 TIME_BETWEEN_PLAYS = 60 * 60 * 2
-TARGET_ID = ''
-TYPE_OF_ID = "MUSIC"
+TARGET_ID = args.like or args.play or args.follow
+TYPE_OF_ID = "MUSIC" if args.follow is None else "ARTIST"
 PROXIES = {
 	"EG": "http://mrrocat:v1wwAC7RucFlArPc_country-Egypt@proxy.packetstream.io:31112",
 	"RU": "http://mrrocat:v1wwAC7RucFlArPc_country-Russia@proxy.packetstream.io:31112"
@@ -64,7 +62,6 @@ def url_unpack(line):
 	}
 
 def get_accounts(file_name="registered.txt"):
-	global COUNTRY
 	if not isfile(file_name):
 		print(f"{Fore.RED}Can't access {file_name} file...{Style.RESET_ALL}")
 		return []
@@ -73,7 +70,7 @@ def get_accounts(file_name="registered.txt"):
 	with open(file_name) as f:
 		for line in f:
 			line = line.strip()
-			if line.startswith(COUNTRY):
+			if line.startswith(args.country):
 				items = line.split("~")
 				country_sorted.append(
 					[
@@ -208,6 +205,7 @@ def follow_artist(session, artist_id, session_uuid, session_sid):
 			"Accept": "application/json, text/plain, */*"
 		}
 	)
+
 	assert response.ok, response.reason
 	assert response.json().get("status") == "ok"
 
@@ -221,14 +219,14 @@ def separator():
 			sleep(.1)
 
 @thread
-def worker(mode, song_id,  email, password, misc, cookies):
+def worker(email, password, misc, cookies):
 	global VOTES_SEND, ERRORS_COUNT
 
 	with Session() as session:
-		if COUNTRY in PROXIES.keys():
+		if args.country in PROXIES.keys():
 			session.proxies = {
-				"http": PROXIES[COUNTRY],
-				"https": PROXIES[COUNTRY]
+				"http": PROXIES[args.country],
+				"https": PROXIES[args.country]
 			}
 
 		session.cookies.update(cookies)
@@ -253,17 +251,17 @@ def worker(mode, song_id,  email, password, misc, cookies):
 
 		try:
 			session_sid = misc["appsidsave"]
-			if mode.lower() == "play":
+			if args.play is not None:
 				play_song(
-					session, song_id, misc["session_fingerprint"], session_sid
+					session, args.play, misc["session_fingerprint"], session_sid
 				)
-			elif mode.lower() == "like":
+			elif args.like is not None:
 				like_song(
-					session, song_id, misc["session_fingerprint"], session_sid
+					session, args.like, misc["session_fingerprint"], session_sid
 				)
-			elif mode.lower() == "follow":
+			elif args.follow is not None:
 				follow_artist(
-					session, song_id, misc["session_uuid"], session_sid
+					session, args.follow, misc["session_uuid"], session_sid
 				)
 			else:
 				raise Exception("Unknown method selected, can't invoke")
@@ -285,23 +283,20 @@ def worker(mode, song_id,  email, password, misc, cookies):
 				f"seconds on Thread.{Style.RESET_ALL}"
 			)
 		finally:
-			if mode == "play":
+			if args.play is not None:
 				SESSIONS["play"][TARGET_ID].update(
 					{
 						email: int(dt.now().timestamp()) + TIME_BETWEEN_PLAYS
 					}
 				)
-			elif mode == "like":
+			elif args.like is not None:
 				SESSIONS["like"][TARGET_ID].append(email)
-			elif mode == "follow":
+			elif args.follow is not None:
 				SESSIONS["follow"][TARGET_ID].append(email)
 
-def main(mode = '', song_id = '', nb_votes=0, country=''):#mode = "like", "play", "follow"
-	global SESSIONS, USED_ACCOUNTS, OLD_GTOKENS, VOTES_NEED, TARGET_ID, COUNTRY
-	threadsMax = 25
-	VOTES_NEED = nb_votes
-	TARGET_ID = mode
-	COUNTRY = country
+def main():
+	global SESSIONS, USED_ACCOUNTS, OLD_GTOKENS
+
 	set_tittle(
 		f"AnghamiVote - {TYPE_OF_ID} ID [{TARGET_ID}] "
 		f"Votes [{VOTES_SEND}/{VOTES_NEED}] - "
@@ -317,17 +312,26 @@ def main(mode = '', song_id = '', nb_votes=0, country=''):#mode = "like", "play"
 		with open("vote_sessions.json") as f:
 			SESSIONS = load(f)
 
+	mode = ""
+
+	if args.play is not None:
+		mode = "play"
+	elif args.like is not None:
+		mode = "like"
+	else:
+		mode = "follow"
+
 	if TARGET_ID in SESSIONS[mode].keys():
 		print("Restoring progress ...")
-		if mode == 'play':
+		if args.play is not None:
 			for email in list(SESSIONS["play"][TARGET_ID].keys()):
 				if SESSIONS["play"][TARGET_ID][email] > dt.now().timestamp():
 					USED_ACCOUNTS.append(email)
 				else:
 					SESSIONS["play"][TARGET_ID].pop(email)
-		elif mode == 'like':
+		elif args.like is not None:
 			USED_ACCOUNTS = SESSIONS["like"][TARGET_ID]
-		elif mode == 'follow':
+		elif args.follow is not None:
 			USED_ACCOUNTS = SESSIONS["follow"][TARGET_ID]
 	else:
 		SESSIONS[mode][TARGET_ID] = {} if mode == "play" else []
@@ -337,11 +341,11 @@ def main(mode = '', song_id = '', nb_votes=0, country=''):#mode = "like", "play"
 	accounts = get_accounts()
 
 	while len(accounts) > 0 and VOTES_SEND < VOTES_NEED:
-		if active_count() - 2 < threadsMax and \
+		if active_count() - 2 < args.threads and \
 				(VOTES_NEED - VOTES_SEND - (active_count() - 2)) > 0:
 			creds = accounts.pop(0)
 			if creds[0] not in USED_ACCOUNTS:
-				worker(mode,song_id, *creds)
+				worker(*creds)
 		else:
 			set_tittle(
 				f"AnghamiVote - {TYPE_OF_ID} ID [{TARGET_ID}] "
@@ -364,47 +368,22 @@ def main(mode = '', song_id = '', nb_votes=0, country=''):#mode = "like", "play"
 		sleep(.1)
 
 if __name__ == "__main__":
-	config = {
-		'user': 'ch80394_sweeper',
-		'password': 'Sweeper2022$',
-		'host': '168.119.43.203',
-		'database': 'ch80394_mrminers',
-	}
-	# Main loop to continuously check for new entries
-	while True:
-		try:
-			# Connect to the database
-			conn = mysql.connector.connect(**config)
-			c = conn.cursor()
-			c.execute('SELECT * FROM anghami WHERE ang_status = 0')
-			data = c.fetchone()  # Retrieve the first matching row
-			if data:
-				id_ = int(data[0])
-				mode_ = data[1].lower()
-				song_id_ = int(data[2])
-				nb_votes = int(data[3])
-				print("We found a new entry", id_, mode_, song_id_, nb_votes)
-				try:
-					main(mode = mode_, song_id=song_id_, nb_votes=nb_votes, country='LB')
-				except KeyboardInterrupt:
-					pass
-				except Exception as reason:
-					print(f"Got unexpected error: {repr(reason)}")
-				finally:
-					print("Saving progress to session ...")
-					c.execute(f'UPDATE anghami SET ang_status = 1 WHERE id = {id_}')
-					conn.commit()
-					with open("vote_sessions.json", "w") as f:
-						dump(SESSIONS, f, separators=(",", ":"))
+	try:
+		main()
+	except KeyboardInterrupt:
+		pass
+	except Exception as reason:
+		print(f"Got unexpected error: {repr(reason)}")
+	finally:
+		print("Saving progress to session ...")
 
-					print(
-						f"Voting ended, votes sended [{VOTES_SEND}] - "
-						f"during - [{int((dt.now() - START).total_seconds())}s] - "
-						f"errors count - [{ERRORS_COUNT}]\nHave a nice day =)")
-			else:
-				print("no entry yet")
-		except:
-			pass
-		finally:
-			conn.close()
-			time.sleep(10)
+		print(
+			f"Voting ended, votes sended [{VOTES_SEND}] - "
+			f"during - [{int((dt.now() - START).total_seconds())}s] - "
+			f"errors count - [{ERRORS_COUNT}]\nHave a nice day =)"
+		)
+		#need add lock file
+		#lib lockfile
+		#or we can split files to write another types
+		with open("vote_sessions.json", "w") as f:
+			dump(SESSIONS, f, separators=(",", ":"))
