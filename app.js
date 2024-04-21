@@ -48,9 +48,17 @@ const server = http.createServer((req, res) => {
                     res.end("Error parsing the form data");
                     return;
                 }
-    
                 const { country, songId, plays } = fields;
-                const command = `python3 send_vote.py -p ${songId[0]} -v ${plays[0]} -c EG -t 5 --old_tokens`;
+                const pythonScript = 'python3';
+                const args = [
+                    'send_vote.py',
+                    '-p', songId[0],
+                    '-v', plays[0],
+                    '-c', 'EG',
+                    '-t', '5',
+                    '--old_tokens'
+                ];
+
 
                 isBusy = true;
                 orderHistory.push({
@@ -61,23 +69,37 @@ const server = http.createServer((req, res) => {
                     status: 'Pending' // or 'Completed' based on your application logic
                 });
                 // saveOrderHistory();
-                exec(command, (error, stdout, stderr) => {
+                // Start the Python script using spawn
+                const pythonProcess = spawn(pythonScript, args);
+
+                // Handle standard output
+                pythonProcess.stdout.on('data', (data) => {
+                    console.log(`send_vote.py output: ${data}`);
+                });
+
+                // Handle standard error
+                pythonProcess.stderr.on('data', (data) => {
+                    console.error(`send_vote.py error: ${data}`);
+                });
+
+                // Handle script exit
+                pythonProcess.on('close', (code) => {
                     console.log("done!");
-                    if (error) {
-                        console.error(`Error executing send_vote.py: ${error}`);
+                    if (code !== 0) {
+                        console.error(`send_vote.py exited with code ${code}`);
                         res.writeHead(500);
                         isBusy = false;
 
                         orderHistory[orderHistory.length - 1].status = 'Error';
                         saveOrderHistory();
-                        return res.end('Internal Server Error');
+                        res.end('Internal Server Error');
+                    } else {
+                        orderHistory[orderHistory.length - 1].status = 'Completed';
+                        saveOrderHistory();
+                        isBusy = false;
+                        res.writeHead(200);
+                        res.end('Vote sent successfully');
                     }
-                    orderHistory[orderHistory.length - 1].status = 'Completed';
-                    saveOrderHistory();
-                    isBusy = false;
-                    console.log(`send_vote.py output: ${stdout}`);
-                    res.writeHead(200);
-                    res.end('Vote sent successfully');
                 });
             });
     }else if (req.method === 'GET' && url.pathname === '/send-vote') {
