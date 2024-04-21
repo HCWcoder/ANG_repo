@@ -112,6 +112,7 @@ def like_song(session, song_id, session_fingerprint, session_sid):
 		"https://api.anghami.com/gateway.php",
 		params=params,
 		data=payload,
+		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -138,6 +139,7 @@ def get_song(session, song_id, session_fingerprint, session_sid):
 	response = session.get(
 		"https://api.anghami.com/gateway.php",
 		params=params,
+		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -177,6 +179,7 @@ def play_song(session, song_id, session_fingerprint, session_sid):
 	response = session.get(
 		"https://api.anghami.com/gateway.php",
 		params=params,
+		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -208,6 +211,7 @@ def follow_artist(session, artist_id, session_uuid, session_sid):
 		"https://api.anghami.com/gateway.php",
 		params=params,
 		data=payload,
+		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -390,7 +394,7 @@ if __name__ == "__main__":
 			f"errors count - [{ERRORS_COUNT}]\nHave a nice day =)"
 		)
 		#need add lock file
-		#lib lockfile
+		#lib lockfilepost()
 		#or we can split files to write another types
 		with open("vote_sessions.json", "w") as f:
 			dump(SESSIONS, f, separators=(",", ":"))
