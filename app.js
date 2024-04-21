@@ -50,7 +50,7 @@ const server = http.createServer((req, res) => {
                 }
     
                 const { country, songId, plays } = fields;
-                const command = `python3 "send_vote.py" -p ${songId[0]} -v ${plays[0]} -c EG -t 5 --old_tokens`;
+                const command = `python3 send_vote.py -p ${songId[0]} -v ${plays[0]} -c EG -t 5 --old_tokens`;
 
                 isBusy = true;
                 orderHistory.push({
@@ -62,6 +62,7 @@ const server = http.createServer((req, res) => {
                 });
                 saveOrderHistory();
                 exec(command, (error, stdout, stderr) => {
+                    console.log("done!");
                     if (error) {
                         console.error(`Error executing send_vote.py: ${error}`);
                         res.writeHead(500);
@@ -87,7 +88,7 @@ const server = http.createServer((req, res) => {
         const plays = url.searchParams.get('plays');
         const country = url.searchParams.get('country');
 
-        const command = `python3 "send_vote.py" -p ${songId} -v ${plays} -c ${country} -t 50 --old_tokens`;
+        const command = `python3 send_vote.py -p ${songId} -v ${plays} -c ${country} -t 50 --old_tokens`;
 
         isBusy = true;
         orderHistory.push({
