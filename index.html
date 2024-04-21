@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+            position: relative;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 50px;
+        }
+        form {
+            width: 80%;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff00;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input, select {
+            width: 60%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            width: 70%;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0px 10px 0 0;
+            /* margin-left: 19%; */
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .loader {
+            border: 16px solid #ebebeb; /* Light grey */
+            border-top: 16px solid #ffc107; /* Blue */
+            border-radius: 50%;
+            width: 120px;
+            height: 120px;
+            animation: spin 2s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-right: -50%;
+            transform: translate(-50%, -50%);
+            display: none; /* Hidden by default */
+            background-color: #ecebc4;
+        }
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        .flex {
+            display: flex;
+            justify-content: space-between;
+            align-content: center;
+            align-items: center;
+        }
+        #country {
+            width: 20%;
+            min-width: 60px;
+        }
+        #plays {
+            width: 70%; /* Adjusted width for the slider */
+            cursor: pointer;
+        }
+        #playsValue {
+            width: 30%;
+            display: inline-block;
+            text-align: center;
+            margin: 0 10px;
+            background-color:gold;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .history-container {
+            width: 100%;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #14000005;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            margin-top: 50px;
+        }
+        h2 {
+            text-align: center;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: center;
+        }
+        th {
+            background-color: #6d6d6d4f;
+        }
+        .status-completed {
+        background-color: #28a745; /* Green for completed */
+        color: white;
+        }
+        .status-error {
+            background-color: #dc3545; /* Red for error */
+            color: white;
+        }
+        .status-pending {
+            background-color: #ffc107; /* Orange for pending */
+            color: black;
+        }
+        #songIdBanner{
+            /* width: 50%; */
+            width: 100%;
+            /* height: 10px; */
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 15px;
+            background-color: #dbd20430;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            white-space: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        .spanses{
+            margin: 5px;
+            padding: 2px;
+            border: 3px solid #0a0a0a;
+            border-radius: 25%;
+            cursor: pointer;
+            background: #0a0a0a;
+            color: #ecebc4;
+            display: inline-block;
+            margin-right: 10px;
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #historyCount{
+            margin-left: 10px;
+            color: #28a745;
+        }
+
+ </style>
+    <title>Submit Vote</title>
+</head>
+<body>
+    <div class="loader"></div>
+    <h1>ANGHAM! B++STER</h1>
+    <div id="songIdBanner">
+        <span>LAST ORDERS: </span>
+    </div>
+    <form id="voteForm" action="/send-vote" method="post">
+        <div class="flex">
+            <select id="country" name="country">
+                <option value="LB">LB</option>
+                <option value="EG" selected>EG</option>
+            </select>
+            <input type="text" id="songId" name="songId" placeholder="Song ID">
+            <input type="range" id="plays" name="plays" min="50" max="9999" value="50" oninput="updatePlaysValue(this.value);" style="width: 60%;">
+        </div>
+        <div class="flex">
+            <button type="submit">Send Plays</button>
+            <button type="submit">Send Likes</button>
+            <button type="submit">Send Followers</button>
+            <span id="playsValue" style="width: 30%;"> +50 </span>
+
+        </div>
+    </form>
+
+    
+    <div class="history-container">
+        <h2>Order History<span id="historyCount">[0]</span></h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Song ID</th>
+                    <th>Number of Plays</th>
+                    <th>Country</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            </tbody>
+        </table>
+    </div>
+</body>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        fetch('/get-order-history')
+            .then(response => response.json())
+            .then(orders => {
+            document.getElementById('historyCount').innerText = `[${orders.length}]`;
+            orders.sort((a, b) => b.id - a.id);
+            const tableBody = document.querySelector('table tbody');
+            orders.forEach(order => {
+                const row = document.createElement('tr');
+                let statusColor = '';
+                switch (order.status) {
+                    case 'Completed':
+                        statusColor = 'status-completed';
+                        break;
+                    case 'Error':
+                        statusColor = 'status-error';
+                        break;
+                    case 'Pending':
+                        statusColor = 'status-pending';
+                        break;
+                }
+                row.innerHTML = `
+                    <td>
+                        <a href="https://play.anghami.com/song/${order.songId}" target="_blank" title="https://play.anghami.com/song/${order.songId}">
+                            ${order.songId}
+                        </a>
+                    </td>
+                    <td>${order.plays}</td>
+                    <td>${order.country}</td>
+                    <td class="${statusColor}">${order.status}</td>
+                `;
+                tableBody.appendChild(row);
+                });
+            });
+        const checkServerBusy = () => {
+            fetch('/check-busy')
+                .then(response => response.json())
+                .then(data => {
+                    const submitButton = document.querySelector('#voteForm button');
+                    const loader = document.querySelector('.loader');
+                    submitButton.disabled = data.isBusy;
+                    loader.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
+                })
+                .catch(error => console.error('Failed to check server status:', error));
+        };
+
+        checkServerBusy();
+        setInterval(checkServerBusy, 5000);
+    });
+</script>
+<script>
+    document.getElementById('voteForm').addEventListener('submit', function(event) {
+        event.preventDefault(); 
+
+        setTimeout(() => {
+            window.location.reload();
+        }, 200);
+
+        const formData = new FormData(this);
+        fetch('/send-vote', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.text())
+        .then(data => {
+            console.log(data);
+            if(data === 'Vote sent successfully') {
+                window.location.reload();
+            } else {
+                alert('Error submitting vote: ' + data);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    });
+</script>
+<script>
+    function updatePlaysValue(value) {
+        document.getElementById('playsValue').innerText = '+'+value;
+    }
+</script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        fetch('/get-unique-song-details')
+            .then(response => response.json())
+            .then(songDetails => {
+                const banner = document.getElementById('songIdBanner');
+                songDetails.forEach(detail => {
+                    const span = document.createElement('span');
+                    span.textContent = `${detail.songId}`;
+                    span.style.margin = '5px';
+                    span.className = 'spanses';
+                    span.style.padding = '5px';
+                    span.style.border = '1px solid gray';
+                    span.style.cursor = 'pointer';
+                    span.onclick = function() { fillInputsWithDetails(detail); };
+                    banner.appendChild(span);
+                });
+            })
+            .catch(error => console.error('Error loading song details:', error));
+    });
+
+    function fillInputsWithDetails(detail) {
+        const songIdInput = document.querySelector('input[name="songId"]');
+        const playsInput = document.querySelector('input[name="plays"]');
+
+        songIdInput.value = detail.songId;
+        updatePlaysValue(detail.plays);
+}
+</script>
+</html>
