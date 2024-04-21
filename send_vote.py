@@ -377,8 +377,6 @@ def main():
 			f"Errors [{ERRORS_COUNT}]"
 		)
 		sleep(.1)
-		if( VOTES_SEND >= int(VOTES_NEED * 0.8)):
-			return True
 
 if __name__ == "__main__":
 	try:
@@ -396,7 +394,7 @@ if __name__ == "__main__":
 			f"errors count - [{ERRORS_COUNT}]\nHave a nice day =)"
 		)
 		#need add lock file
-		#lib lockfilepost()
+		#lib lockfile
 		#or we can split files to write another types
 		with open("vote_sessions.json", "w") as f:
 			dump(SESSIONS, f, separators=(",", ":"))
