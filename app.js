@@ -50,7 +50,7 @@ const server = http.createServer((req, res) => {
                 }
     
                 const { country, songId, plays } = fields;
-                const command = `python3 "/home/ubuntu/ANG_repo/send_vote.py" -p ${songId[0]} -v ${plays[0]} -c EG -t 25 --old_tokens`;
+                const command = `python3 "/home/ubuntu/ANG_repo/send_vote.py" -p ${songId[0]} -v ${plays[0]} -c EG -t 5 --old_tokens`;
 
                 isBusy = true;
                 orderHistory.push({
