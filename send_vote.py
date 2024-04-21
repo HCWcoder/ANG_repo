@@ -352,10 +352,12 @@ def main():
 	accounts = get_accounts()
 
 	print("Starting get_accounts...")
+	print(VOTES_SEND, VOTES_NEED, args.threads, len(accounts))
 	while len(accounts) > 0 and VOTES_SEND < VOTES_NEED:
 		if active_count() - 2 < args.threads and \
 				(VOTES_NEED - VOTES_SEND - (active_count() - 2)) > 0:
 			creds = accounts.pop(0)
+			print("creds", creds)
 			if creds[0] not in USED_ACCOUNTS:
 				worker(*creds)
 		else:
