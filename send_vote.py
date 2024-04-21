@@ -357,7 +357,7 @@ def main():
 		if active_count() - 2 < args.threads and \
 				(VOTES_NEED - VOTES_SEND - (active_count() - 2)) > 0:
 			creds = accounts.pop(0)
-			print("creds", creds)
+			print(creds[0])
 			if creds[0] not in USED_ACCOUNTS:
 				worker(*creds)
 		else:
