@@ -351,6 +351,7 @@ def main():
 
 	accounts = get_accounts()
 
+	print("Starting get_accounts...")
 	while len(accounts) > 0 and VOTES_SEND < VOTES_NEED:
 		if active_count() - 2 < args.threads and \
 				(VOTES_NEED - VOTES_SEND - (active_count() - 2)) > 0:
@@ -368,6 +369,7 @@ def main():
 
 			sleep(.1)
 
+	print("Starting active_count...")
 	while active_count() > 2:
 		set_tittle(
 			f"AnghamiVote - {TYPE_OF_ID} ID [{TARGET_ID}] "
