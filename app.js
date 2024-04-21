@@ -9,13 +9,13 @@ let orderHistory = [];
 
 function saveOrderHistory() {
     console.log(orderHistory);
-    fs.writeFile('E:/backup2/Anghami - Github Repo/ANG_repo/orderHistory.json', JSON.stringify(orderHistory), err => {
+    fs.writeFile('/home/ubuntu/ANG_repo/orderHistory.json', JSON.stringify(orderHistory), err => {
         if (err) console.log('Error writing file:', err);
     });
 }
 
 function loadOrderHistory() {
-    fs.readFile('E:/backup2/Anghami - Github Repo/ANG_repo/orderHistory.json', (err, data) => {
+    fs.readFile('/home/ubuntu/ANG_repo/orderHistory.json', (err, data) => {
         if (err) {
             console.log('Error reading file:', err);
             return;
@@ -50,7 +50,7 @@ const server = http.createServer((req, res) => {
                 }
     
                 const { country, songId, plays } = fields;
-                const command = `python "E:/backup2/Anghami - Github Repo/ANG_repo/send_vote.py" -p ${songId[0]} -v ${plays[0]} -c EG -t 25 --old_tokens`;
+                const command = `python "/home/ubuntu/ANG_repo/send_vote.py" -p ${songId[0]} -v ${plays[0]} -c EG -t 25 --old_tokens`;
 
                 isBusy = true;
                 orderHistory.push({
@@ -87,7 +87,7 @@ const server = http.createServer((req, res) => {
         const plays = url.searchParams.get('plays');
         const country = url.searchParams.get('country');
 
-        const command = `python "E:/backup2/Anghami - Github Repo/ANG_repo/send_vote.py" -p ${songId} -v ${plays} -c ${country} -t 50 --old_tokens`;
+        const command = `python "/home/ubuntu/ANG_repo/send_vote.py" -p ${songId} -v ${plays} -c ${country} -t 50 --old_tokens`;
 
         isBusy = true;
         orderHistory.push({
