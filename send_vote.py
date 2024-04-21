@@ -32,7 +32,7 @@ TIME_BETWEEN_PLAYS = 60 * 60 * 2
 TARGET_ID = args.like or args.play or args.follow
 TYPE_OF_ID = "MUSIC" if args.follow is None else "ARTIST"
 PROXIES = {
-	"EG": "http://mrrocat:v1wwAC7RucFlArPc_country-Egypt@proxy.packetstream.io:31112",
+	# "EG": "http://mrrocat:v1wwAC7RucFlArPc_country-Egypt@proxy.packetstream.io:31112",
 	"RU": "http://mrrocat:v1wwAC7RucFlArPc_country-Russia@proxy.packetstream.io:31112"
 }
 SESSIONS = {
