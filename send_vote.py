@@ -26,7 +26,7 @@ VOTES_SEND = 0
 ERRORS_COUNT = 0
 USED_ACCOUNTS = []
 LOCK_OBJECT = Lock()
-VOTES_NEED = int(args.votes * 0.8)
+VOTES_NEED = args.votes
 LOCK_OBJECT_FOR_PRINT = Lock()
 TIME_BETWEEN_PLAYS = 60 * 60 * 2
 TARGET_ID = args.like or args.play or args.follow
@@ -377,6 +377,8 @@ def main():
 			f"Errors [{ERRORS_COUNT}]"
 		)
 		sleep(.1)
+		if( VOTES_SEND >= int(VOTES_NEED * 0.8)):
+			return True
 
 if __name__ == "__main__":
 	try:
