@@ -60,7 +60,7 @@ const server = http.createServer((req, res) => {
                     country: country[0],
                     status: 'Pending' // or 'Completed' based on your application logic
                 });
-                saveOrderHistory();
+                // saveOrderHistory();
                 exec(command, (error, stdout, stderr) => {
                     console.log("done!");
                     if (error) {
