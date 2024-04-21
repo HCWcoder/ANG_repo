@@ -5,7 +5,10 @@ from json import load, dump
 from os.path import isfile
 from random import random
 from time import sleep
-import ctypes
+import platform
+if platform.system() == 'Windows':
+    # Windows-specific code using ctypes.windll
+	import ctypes
 
 
 from colorama import init, Fore, Style
@@ -54,7 +57,11 @@ def thread(my_func):
 	return wrapper
 
 def set_tittle(text):
-	ctypes.windll.kernel32.SetConsoleTitleW(text)
+	if platform.system() == 'Windows':
+		ctypes.windll.kernel32.SetConsoleTitleW(text)
+	else:
+		print(f"\033]0;{text}\007", end="")
+	
 
 def url_unpack(line):
 	return {
