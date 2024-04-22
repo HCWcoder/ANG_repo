@@ -41,8 +41,6 @@ const server = http.createServer((req, res) => {
             res.end(data);
         });
     } else if (req.method === 'POST' && url.pathname === '/send-vote') {
-        console.log("POST request received");
-        return;
         if(isBusy){
             return res.end('Server is busy sending votes... Please try again later.');
         }
@@ -115,8 +113,6 @@ const server = http.createServer((req, res) => {
             });
         });
     }else if (req.method === 'GET' && url.pathname === '/send-vote') {
-        console.log("GET request received");
-        return;
         if (isBusy){
             return res.end('Server is busy sending votes... Please try again later.');
         }
