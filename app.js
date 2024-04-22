@@ -55,7 +55,7 @@ const server = http.createServer((req, res) => {
                 console.log('splitmsg', splitmsg);
                 var songIdsplited = splitmsg[splitmsg.length-1];
                 console.log('songIdsplited', songIdsplited);
-                songIdsplited = Number(songId);
+                songIdsplited = parseInt(songId);
                 console.log(songIdsplited);
                 const pythonScript = 'python3';
                 const args = [
