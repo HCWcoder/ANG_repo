@@ -134,7 +134,8 @@
             background-color: #ffc107; /* Orange for pending */
             color: black;
         }
-        #songIdBanner{
+        #songIdBanner {
+            display: flex;
             /* width: 50%; */
             width: 100%;
             /* height: 10px; */
@@ -147,6 +148,8 @@
             white-space: nowrap;
             overflow-x: auto;
             overflow-y: hidden;
+            align-content: center;
+            align-items: center;
         }
         .spanses{
             margin: 5px;
@@ -216,6 +219,17 @@
     .song-item:hover {
         background-color: #f0f0f0;
     }
+    .tesd {
+        width: 16%;
+        padding: 10px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        margin: 0px 10px 0 0;
+        /* margin-left: 19%; */
+    }
 </style>
     <title>Submit Vote</title>
 </head>
@@ -223,7 +237,7 @@
     <div class="loader"></div>
     <h1>ANGHAM! B++STER</h1>
     <div id="songIdBanner">
-        <button onclick="toggleSongList()">Show Songs</button>
+        <button class="tesd" onclick="toggleSongList()">Show Songs</button>
         <span>LAST ORDERS: </span>
     </div>
     <div class="song-list-container" id="songList">
