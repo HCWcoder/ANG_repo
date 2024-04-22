@@ -4,6 +4,7 @@ const { exec } = require('child_process');
 const { fail } = require('assert');
 const formidable = require('formidable');
 const { spawn } = require('child_process');
+const PythonShell = require('python-shell').PythonShell;
 
 let isBusy = false;
 let orderHistory = [];
@@ -122,23 +123,53 @@ const server = http.createServer((req, res) => {
             status: 'Pending' // or 'Completed' based on your application logic
         });
         saveOrderHistory();
-        exec(command, (error, stdout, stderr) => {
-            if (error) {
-                console.error(`Error executing send_vote.py: ${error}`);
-                res.writeHead(500);
-                isBusy = false;
-
-                orderHistory[orderHistory.length - 1].status = 'Error!';
-                saveOrderHistory();
-                return res.end('Internal Server Error');
-            }
-            orderHistory[orderHistory.length - 1].status = 'Completed';
+        var options = {
+            args: [
+                `-p ${songId}`,   // Pass song ID as argument
+                `-v ${plays}`,    // Pass number of plays as argument
+                `-c ${country}`,  // Pass country as argument
+                '-t', '50',       // Assuming '-t' takes '50' as a value
+                '--old_tokens'    // Additional argument without a value
+            ]
+        };
+          
+        PythonShell.run('send_vote.py', options, function (err, results) {
+        if (err){
+            console.error(`Error executing send_vote.py: ${error}`);
+            res.writeHead(500);
             isBusy = false;
-            console.log(`send_vote.py output: ${stdout}`);
+
+            orderHistory[orderHistory.length - 1].status = 'Error!';
             saveOrderHistory();
-            res.writeHead(200);
-            res.end('Vote sent successfully');
+            return res.end('Internal Server Error');
+        }
+        // Results is an array consisting of messages collected during execution
+        console.log('results: %j', results);
+        orderHistory[orderHistory.length - 1].status = 'Completed';
+        isBusy = false;
+        console.log(`send_vote.py output: ${stdout}`);
+        saveOrderHistory();
+        res.writeHead(200);
+        res.end('Vote sent successfully');
         });
+
+        // exec(command, (error, stdout, stderr) => {
+        //     if (error) {
+        //         console.error(`Error executing send_vote.py: ${error}`);
+        //         res.writeHead(500);
+        //         isBusy = false;
+
+        //         orderHistory[orderHistory.length - 1].status = 'Error!';
+        //         saveOrderHistory();
+        //         return res.end('Internal Server Error');
+        //     }
+        //     orderHistory[orderHistory.length - 1].status = 'Completed';
+        //     isBusy = false;
+        //     console.log(`send_vote.py output: ${stdout}`);
+        //     saveOrderHistory();
+        //     res.writeHead(200);
+        //     res.end('Vote sent successfully');
+        // });
     } else if (req.method === 'GET' && url.pathname === '/get-order-history') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         // console.log(orderHistory);
