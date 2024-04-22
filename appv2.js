@@ -72,6 +72,7 @@ const server = http.createServer((req, res) => {
         case '/send-vote2':
         case '/send-vote3':
             if (!isBusy) {
+                console.log("post on ", url.pathname);
                 const form = new formidable.IncomingForm();
                 form.parse(req, (err, fields) => {
                     if (err) {
