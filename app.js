@@ -55,11 +55,8 @@ const server = http.createServer((req, res) => {
             }
             const { country, songId, plays } = fields;
             var splitmsg = songId[0].toString().split('/');
-            console.log('splitmsg', splitmsg);
             var songIdsplited = splitmsg[splitmsg.length-1];
-            console.log('songIdsplited', songIdsplited);
             songIdsplited = Number(songIdsplited);
-            console.log(songIdsplited);
             const pythonScript = 'python3';
             const args = [
                 'send_vote.py',
@@ -78,7 +75,7 @@ const server = http.createServer((req, res) => {
                 country: country[0],
                 status: 'Pending' // or 'Completed' based on your application logic
             });
-            // saveOrderHistory();
+            saveOrderHistory();
             // Start the Python script using spawn
             const pythonProcess = spawn(pythonScript, args);
 
