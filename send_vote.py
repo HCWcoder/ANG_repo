@@ -60,7 +60,7 @@ def set_tittle(text):
 	if platform.system() == 'Windows':
 		ctypes.windll.kernel32.SetConsoleTitleW(text)
 	else:
-		print(f"\033]0;{text}\007", end="")
+		print(text, end="")
 	
 
 def url_unpack(line):
@@ -112,7 +112,6 @@ def like_song(session, song_id, session_fingerprint, session_sid):
 		"https://api.anghami.com/gateway.php",
 		params=params,
 		data=payload,
-		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -139,7 +138,6 @@ def get_song(session, song_id, session_fingerprint, session_sid):
 	response = session.get(
 		"https://api.anghami.com/gateway.php",
 		params=params,
-		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -179,7 +177,6 @@ def play_song(session, song_id, session_fingerprint, session_sid):
 	response = session.get(
 		"https://api.anghami.com/gateway.php",
 		params=params,
-		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -211,7 +208,6 @@ def follow_artist(session, artist_id, session_uuid, session_sid):
 		"https://api.anghami.com/gateway.php",
 		params=params,
 		data=payload,
-		timeout=10,
 		headers={
 			"Accept": "application/json, text/plain, */*"
 		}
@@ -351,13 +347,10 @@ def main():
 
 	accounts = get_accounts()
 
-	print("Starting get_accounts...")
-	print(VOTES_SEND, VOTES_NEED, args.threads, len(accounts))
 	while len(accounts) > 0 and VOTES_SEND < VOTES_NEED:
 		if active_count() - 2 < args.threads and \
 				(VOTES_NEED - VOTES_SEND - (active_count() - 2)) > 0:
 			creds = accounts.pop(0)
-			print(creds[0])
 			if creds[0] not in USED_ACCOUNTS:
 				worker(*creds)
 		else:
@@ -371,7 +364,6 @@ def main():
 
 			sleep(.1)
 
-	print("Starting active_count...")
 	while active_count() > 2:
 		set_tittle(
 			f"AnghamiVote - {TYPE_OF_ID} ID [{TARGET_ID}] "

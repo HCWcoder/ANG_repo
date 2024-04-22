@@ -135,7 +135,7 @@ const server = http.createServer((req, res) => {
           
         PythonShell.run('send_vote.py', options, function (err, results) {
         if (err){
-            console.error(`Error executing send_vote.py: ${error}`);
+            console.error(`Error executing send_vote.py: ${err}`);
             res.writeHead(500);
             isBusy = false;
 
