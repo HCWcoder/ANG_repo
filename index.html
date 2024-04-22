@@ -292,7 +292,9 @@
 </script>
 <script>
     function updatePlaysValue(value) {
-        document.getElementById('playsValue').innerText = '+'+value;
+        const minutesPerThousand = 6;
+        var time = (plays / 1000) * minutesPerThousand;
+        document.getElementById('playsValue').innerText = '+' + value +'['+ time.toFixed(2) + ' minutes]';
     }
 </script>
 <script>
