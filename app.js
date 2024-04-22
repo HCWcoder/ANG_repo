@@ -56,8 +56,8 @@ const server = http.createServer((req, res) => {
                     'send_vote.py',
                     '-p', songId[0],
                     '-v', plays[0],
-                    '-c', 'EG',
-                    '-t', '5',
+                    '-c', 'ALL',
+                    '-t', '25',
                     '--old_tokens'
                 ];
 
