@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
                     '-p', songId[0],
                     '-v', plays[0],
                     '-c', 'EG',
-                    '-t', '25',
+                    '-t', '35',
                     '--old_tokens'
                 ];
 
