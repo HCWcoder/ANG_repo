@@ -167,7 +167,32 @@
             margin-left: 10px;
             color: #28a745;
         }
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
 
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 120px;
+            background-color: black;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px 0;
+            position: absolute;
+            z-index: 1;
+            bottom: 100%;
+            left: 50%;
+            margin-left: -60px; /* Use half of the width (120px/2 = 60px) */
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
  </style>
     <title>Submit Vote</title>
 </head>
@@ -187,11 +212,19 @@
             <input type="range" id="plays" name="plays" min="50" max="9999" value="50" oninput="updatePlaysValue(this.value);" style="width: 60%;">
         </div>
         <div class="flex">
-            <button type="submit">Send Plays</button>
-            <button type="submit" formaction="/send-vote2" disabled>Send Likes</button>
-            <button type="submit" formaction="/send-vote3" disabled>Send Followers</button>
-            <span id="playsValue"> +50[0.30 minutes] </span>
-
+            <div class="tooltip">
+                <button type="submit">Send Plays</button>
+                <span class="tooltiptext">Example: https://play.anghami.com/song/1122520672</span>
+            </div>
+            <div class="tooltip">
+                <button type="submit" formaction="/send-vote2">Send Likes</button>
+                <span class="tooltiptext">Example: https://play.anghami.com/song/1122520672</span>
+            </div>
+            <div class="tooltip">
+                <button type="submit" formaction="/send-vote3">Send Followers</button>
+                <span class="tooltiptext">Example: https://play.anghami.com/artist/886</span>
+            </div>
+            <span id="playsValue">+50 [0.30 minutes]</span>
         </div>
     </form>
 
