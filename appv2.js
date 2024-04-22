@@ -15,7 +15,13 @@ function saveOrderHistory() {
 }
 
 // Handle sending vote with a Python script
-function handleSendVote(fields, res) {
+function handleVote(param, fields, res) {
+    const paramsMap = {'/send-vote': '-p', '/send-vote2': '-l', '/send-vote3': '-f'};
+    if (paramsMap[param] && !isBusy) {
+        param = paramsMap[param];
+    } else {
+        res.end('Server is busy sending votes... Please try again later.');
+    }
     const { country, songId, plays } = fields;
     const songIdSplit = songId[0].toString().split('/');
     const songIdFinal = songIdSplit[songIdSplit.length - 1];
@@ -23,7 +29,7 @@ function handleSendVote(fields, res) {
     const pythonScript = 'python3';
     const args = [
         'send_vote.py',
-        '-p', songIdFinal,
+        param, songIdFinal,
         '-v', plays[0],
         '-c', 'EG',
         '-t', '35',
@@ -63,6 +69,8 @@ const server = http.createServer((req, res) => {
             });
             break;
         case '/send-vote':
+        case '/send-vote2':
+        case '/send-vote3':
             if (!isBusy) {
                 const form = new formidable.IncomingForm();
                 form.parse(req, (err, fields) => {
@@ -71,7 +79,7 @@ const server = http.createServer((req, res) => {
                         res.writeHead(500);
                         res.end("Error parsing the form data");
                     } else {
-                        handleSendVote(fields, res);
+                        handleVote(url.pathname, fields, res);
                     }
                 });
             } else {

@@ -188,8 +188,8 @@
         </div>
         <div class="flex">
             <button type="submit">Send Plays</button>
-            <button type="submit" disabled>Send Likes</button>
-            <button type="submit" disabled>Send Followers</button>
+            <button type="submit" formaction="/send-vote2">Send Likes</button>
+            <button type="submit" formaction="/send-vote3">Send Followers</button>
             <span id="playsValue"> +50[0.30 minutes] </span>
 
         </div>
@@ -270,14 +270,11 @@
 </script>
 <script>
     document.getElementById('voteForm').addEventListener('submit', function(event) {
-        event.preventDefault(); 
-
-        setTimeout(() => {
-            window.location.reload();
-        }, 200);
+        event.preventDefault(); // Prevent the default form submission
+        const actionUrl = event.submitter.formAction || this.action; // Determine the action based on the clicked button
 
         const formData = new FormData(this);
-        fetch('/send-vote', {
+        fetch(actionUrl, {
             method: 'POST',
             body: formData
         })
