@@ -365,11 +365,11 @@ def main():
 			sleep(.1)
 
 	while active_count() > 2:
-		if(VOTES_SEND < votes_threshold):
+		if(VOTES_SEND > votes_threshold):
 			break
 		set_tittle(
 			f"AnghamiVote - {TYPE_OF_ID} ID [{TARGET_ID}] "
-			f"Votes [{VOTES_SEND}/{VOTES_NEED}] - "
+			f"Votes [{VOTES_SEND}/{VOTES_NEED}-{votes_threshold}] - "
 			f"Threads [{active_count() - 2}] - "
 			f"Running [{int((dt.now() - START).total_seconds())}s] - "
 			f"Errors [{ERRORS_COUNT}]"
