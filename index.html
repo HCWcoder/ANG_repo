@@ -222,9 +222,11 @@
 <body>
     <div class="loader"></div>
     <h1>ANGHAM! B++STER</h1>
-    <button onclick="toggleSongList()">Show Songs</button>
     <div id="songIdBanner">
+        <button onclick="toggleSongList()">Show Songs</button>
         <span>LAST ORDERS: </span>
+    </div>
+    <div class="song-list-container" id="songList">
     </div>
     <form id="voteForm" action="/send-vote" method="post">
         <div class="flex">
