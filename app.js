@@ -67,7 +67,6 @@ const server = http.createServer((req, res) => {
                     '--old_tokens'
                 ];
 
-                return;
                 isBusy = true;
                 orderHistory.push({
                     id: orderHistory.length + 1,
