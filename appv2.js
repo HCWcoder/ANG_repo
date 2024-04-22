@@ -90,6 +90,10 @@ const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(Object.values(songDetails)));
             break;
+        case '/check-busy':
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ isBusy }));
+            break;
         default:
             res.writeHead(404);
             res.end('Not Found');
