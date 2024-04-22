@@ -52,12 +52,12 @@ const server = http.createServer((req, res) => {
                 }
                 const { country, songId, plays } = fields;
                 var splitmsg = songId[0].toString().split('/');
-                songId = splitmsg[splitmsg.length-1];
-                songId = Number(songId);
+                var songIdsplited = splitmsg[splitmsg.length-1];
+                songIdsplited = Number(songId);
                 const pythonScript = 'python3';
                 const args = [
                     'send_vote.py',
-                    '-p', songId,
+                    '-p', songIdsplited,
                     '-v', plays[0],
                     '-c', 'EG',
                     '-t', '35',
@@ -68,7 +68,7 @@ const server = http.createServer((req, res) => {
                 isBusy = true;
                 orderHistory.push({
                     id: orderHistory.length + 1,
-                    songId: songId,
+                    songId: songIdsplited,
                     plays: plays[0],
                     country: country[0],
                     status: 'Pending' // or 'Completed' based on your application logic
