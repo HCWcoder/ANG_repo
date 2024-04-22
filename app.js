@@ -51,7 +51,7 @@ const server = http.createServer((req, res) => {
                     return;
                 }
                 const { country, songId, plays } = fields;
-                var splitmsg = songId[0].split('/')
+                var splitmsg = songId[0].toString().split('/');
                 songId = splitmsg[splitmsg.length-1];
                 const pythonScript = 'python3';
                 const args = [
