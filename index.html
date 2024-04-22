@@ -194,11 +194,35 @@
             opacity: 1;
         }
  </style>
+ <style>
+    /* Existing styles remain unchanged, only the necessary additions are included here */
+    .song-list-container {
+        position: absolute;
+        background: #fff;
+        border: 1px solid #ccc;
+        width: 60%;
+        max-height: 300px;
+        overflow-y: auto;
+        display: none; /* Initially hidden */
+        z-index: 1000;
+        padding: 10px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        left: 20%;
+    }
+    .song-item {
+        padding: 5px;
+        cursor: pointer;
+    }
+    .song-item:hover {
+        background-color: #f0f0f0;
+    }
+</style>
     <title>Submit Vote</title>
 </head>
 <body>
     <div class="loader"></div>
     <h1>ANGHAM! B++STER</h1>
+    <button onclick="toggleSongList()">Show Songs</button>
     <div id="songIdBanner">
         <span>LAST ORDERS: </span>
     </div>
@@ -247,6 +271,39 @@
         </table>
     </div>
 </body>
+<script>
+    const songs = [
+        {id: "1122520672", name: "هلالالا"},
+        {id: "113354", name: "ورينى"},
+        {id: "5101858", name: "اجازة (مع بوسي)"},
+        // Add all other songs following the same format
+    ];
+
+    function toggleSongList() {
+        const listContainer = document.getElementById('songList');
+        if (listContainer.style.display === 'none' || listContainer.style.display === '') {
+            listContainer.style.display = 'block';
+            populateSongList();
+        } else {
+            listContainer.style.display = 'none';
+        }
+    }
+
+    function populateSongList() {
+        const listContainer = document.getElementById('songList');
+        listContainer.innerHTML = ''; // Clear existing list
+        songs.forEach(song => {
+            const div = document.createElement('div');
+            div.className = 'song-item';
+            div.textContent = `${song.name} (${song.id})`;
+            div.onclick = function() {
+                document.getElementById('songId').value = song.id;
+                toggleSongList(); // Hide the list after selection
+            };
+            listContainer.appendChild(div);
+        });
+    }
+</script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         let wasBusy = false;
