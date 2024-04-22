@@ -251,14 +251,10 @@
             fetch('/check-busy')
                 .then(response => response.json())
                 .then(data => {
-                    if (!data.isBusy) {
-                        window.location.reload();
-                    } else {
-                        const submitButton = document.querySelector('#voteForm button');
-                        const loader = document.querySelector('.loader');
-                        submitButton.disabled = data.isBusy;
-                        loader.style.display = data.isBusy ? 'block' : 'none';
-                    }
+                    const submitButton = document.querySelector('#voteForm button');
+                    const loader = document.querySelector('.loader');
+                    submitButton.disabled = data.isBusy;
+                    loader.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
                 })
                 .catch(error => console.error('Failed to check server status:', error));
         };
@@ -282,12 +278,7 @@
         })
         .then(response => response.text())
         .then(data => {
-            console.log(data);
-            if(data === 'Vote sent successfully') {
-                window.location.reload();
-            } else {
-                alert('Error submitting vote: ' + data);
-            }
+            window.location.reload();
         })
         .catch(error => {
             console.error('Error:', error);
