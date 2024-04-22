@@ -228,7 +228,7 @@
                         statusColor = 'status-completed';
                         break;
                     case 'Error':
-                        statusColor = 'status-error';
+                        statusColor = 'status-completed';
                         break;
                     case 'Pending':
                         statusColor = 'status-pending';
@@ -251,10 +251,14 @@
             fetch('/check-busy')
                 .then(response => response.json())
                 .then(data => {
-                    const submitButton = document.querySelector('#voteForm button');
-                    const loader = document.querySelector('.loader');
-                    submitButton.disabled = data.isBusy;
-                    loader.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
+                    if (!data.isBusy) {
+                        window.location.reload();
+                    } else {
+                        const submitButton = document.querySelector('#voteForm button');
+                        const loader = document.querySelector('.loader');
+                        submitButton.disabled = data.isBusy;
+                        loader.style.display = data.isBusy ? 'block' : 'none';
+                    }
                 })
                 .catch(error => console.error('Failed to check server status:', error));
         };

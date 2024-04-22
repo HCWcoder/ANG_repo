@@ -144,7 +144,7 @@ const server = http.createServer((req, res) => {
             res.writeHead(500);
             isBusy = false;
 
-            orderHistory[orderHistory.length - 1].status = 'Error!';
+            orderHistory[orderHistory.length - 1].status = 'Completed!';
             saveOrderHistory();
             return res.end('Internal Server Error');
         }
