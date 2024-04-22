@@ -53,6 +53,7 @@ const server = http.createServer((req, res) => {
                 const { country, songId, plays } = fields;
                 var splitmsg = songId[0].toString().split('/');
                 songId = splitmsg[splitmsg.length-1];
+                songId = Number(songId);
                 const pythonScript = 'python3';
                 const args = [
                     'send_vote.py',
