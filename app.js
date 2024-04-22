@@ -76,20 +76,13 @@ const server = http.createServer((req, res) => {
                 status: 'Pending' // or 'Completed' based on your application logic
             });
             saveOrderHistory();
-            // Start the Python script using spawn
             const pythonProcess = spawn(pythonScript, args);
-
-            // Handle standard output
             pythonProcess.stdout.on('data', (data) => {
                 console.log(`send_vote.py output: ${data}`);
             });
-
-            // Handle standard error
             pythonProcess.stderr.on('data', (data) => {
                 console.error(`send_vote.py error: ${data}`);
             });
-
-            // Handle script exit
             pythonProcess.on('close', (code) => {
                 console.log("done!");
                 if (code !== 0) {
