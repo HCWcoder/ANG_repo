@@ -127,7 +127,7 @@ const server = http.createServer((req, res) => {
             args: [
                 `-p ${songId}`,   // Pass song ID as argument
                 `-v ${plays}`,    // Pass number of plays as argument
-                `-c ${country}`,  // Pass country as argument
+                '-c', 'ALL',  // Pass country as argument
                 '-t', '50',       // Assuming '-t' takes '50' as a value
                 '--old_tokens'    // Additional argument without a value
             ]
