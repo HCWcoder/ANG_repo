@@ -378,8 +378,13 @@
 </script>
 <script>
     document.getElementById('voteForm').addEventListener('submit', function(event) {
-        console.log('submitting form...');
         event.preventDefault(); // Prevent the default form submission
+        var songId = document.getElementById('songId').value;
+        if (!songId) {
+            alert('Please enter a Song ID before submitting.');
+            return; // Stop the form submission
+        }
+        console.log('submitting form...');
         const actionUrl = event.submitter.formAction || this.action; // Determine the action based on the clicked button
         console.log(actionUrl);
         const formData = new FormData(this);
