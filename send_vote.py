@@ -346,7 +346,7 @@ def main():
 	print("Starting votes...")
 
 	accounts = get_accounts()
-
+	votes_threshold = 0.8 * VOTES_NEED
 	while len(accounts) > 0 and VOTES_SEND < VOTES_NEED:
 		if active_count() - 2 < args.threads and \
 				(VOTES_NEED - VOTES_SEND - (active_count() - 2)) > 0:
@@ -365,6 +365,8 @@ def main():
 			sleep(.1)
 
 	while active_count() > 2:
+		if(VOTES_SEND < votes_threshold):
+			break
 		set_tittle(
 			f"AnghamiVote - {TYPE_OF_ID} ID [{TARGET_ID}] "
 			f"Votes [{VOTES_SEND}/{VOTES_NEED}] - "
