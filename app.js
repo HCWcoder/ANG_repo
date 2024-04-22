@@ -52,8 +52,11 @@ const server = http.createServer((req, res) => {
                 }
                 const { country, songId, plays } = fields;
                 var splitmsg = songId[0].toString().split('/');
+                console.log('splitmsg', splitmsg);
                 var songIdsplited = splitmsg[splitmsg.length-1];
+                console.log('songIdsplited', songIdsplited);
                 songIdsplited = Number(songId);
+                console.log(songIdsplited);
                 const pythonScript = 'python3';
                 const args = [
                     'send_vote.py',
@@ -64,7 +67,7 @@ const server = http.createServer((req, res) => {
                     '--old_tokens'
                 ];
 
-
+                return;
                 isBusy = true;
                 orderHistory.push({
                     id: orderHistory.length + 1,
