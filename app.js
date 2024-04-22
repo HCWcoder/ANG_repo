@@ -41,75 +41,82 @@ const server = http.createServer((req, res) => {
             res.end(data);
         });
     } else if (req.method === 'POST' && url.pathname === '/send-vote') {
-            const form = new formidable.IncomingForm();
-    
-            form.parse(req, (err, fields, files) => {
-                if (err) {
-                    console.error(err);
-                    res.writeHead(500);
-                    res.end("Error parsing the form data");
-                    return;
-                }
-                const { country, songId, plays } = fields;
-                var splitmsg = songId[0].toString().split('/');
-                console.log('splitmsg', splitmsg);
-                var songIdsplited = splitmsg[splitmsg.length-1];
-                console.log('songIdsplited', songIdsplited);
-                songIdsplited = Number(songIdsplited);
-                console.log(songIdsplited);
-                const pythonScript = 'python3';
-                const args = [
-                    'send_vote.py',
-                    '-p', songIdsplited,
-                    '-v', plays[0],
-                    '-c', 'EG',
-                    '-t', '35',
-                    '--old_tokens'
-                ];
+        console.log("POST request received");
+        return;
+        if(isBusy){
+            return res.end('Server is busy sending votes... Please try again later.');
+        }
+        const form = new formidable.IncomingForm();
 
-                isBusy = true;
-                orderHistory.push({
-                    id: orderHistory.length + 1,
-                    songId: songIdsplited,
-                    plays: plays[0],
-                    country: country[0],
-                    status: 'Pending' // or 'Completed' based on your application logic
-                });
-                // saveOrderHistory();
-                // Start the Python script using spawn
-                const pythonProcess = spawn(pythonScript, args);
+        form.parse(req, (err, fields, files) => {
+            if (err) {
+                console.error(err);
+                res.writeHead(500);
+                res.end("Error parsing the form data");
+                return;
+            }
+            const { country, songId, plays } = fields;
+            var splitmsg = songId[0].toString().split('/');
+            console.log('splitmsg', splitmsg);
+            var songIdsplited = splitmsg[splitmsg.length-1];
+            console.log('songIdsplited', songIdsplited);
+            songIdsplited = Number(songIdsplited);
+            console.log(songIdsplited);
+            const pythonScript = 'python3';
+            const args = [
+                'send_vote.py',
+                '-p', songIdsplited,
+                '-v', plays[0],
+                '-c', 'EG',
+                '-t', '35',
+                '--old_tokens'
+            ];
 
-                // Handle standard output
-                pythonProcess.stdout.on('data', (data) => {
-                    console.log(`send_vote.py output: ${data}`);
-                });
-
-                // Handle standard error
-                pythonProcess.stderr.on('data', (data) => {
-                    console.error(`send_vote.py error: ${data}`);
-                });
-
-                // Handle script exit
-                pythonProcess.on('close', (code) => {
-                    console.log("done!");
-                    if (code !== 0) {
-                        console.error(`send_vote.py exited with code ${code}`);
-                        res.writeHead(500);
-                        isBusy = false;
-
-                        orderHistory[orderHistory.length - 1].status = 'Completed';
-                        saveOrderHistory();
-                        res.end('Internal Server Error');
-                    } else {
-                        orderHistory[orderHistory.length - 1].status = 'Completed';
-                        saveOrderHistory();
-                        isBusy = false;
-                        res.writeHead(200);
-                        res.end('Vote sent successfully');
-                    }
-                });
+            isBusy = true;
+            orderHistory.push({
+                id: orderHistory.length + 1,
+                songId: songIdsplited,
+                plays: plays[0],
+                country: country[0],
+                status: 'Pending' // or 'Completed' based on your application logic
             });
+            // saveOrderHistory();
+            // Start the Python script using spawn
+            const pythonProcess = spawn(pythonScript, args);
+
+            // Handle standard output
+            pythonProcess.stdout.on('data', (data) => {
+                console.log(`send_vote.py output: ${data}`);
+            });
+
+            // Handle standard error
+            pythonProcess.stderr.on('data', (data) => {
+                console.error(`send_vote.py error: ${data}`);
+            });
+
+            // Handle script exit
+            pythonProcess.on('close', (code) => {
+                console.log("done!");
+                if (code !== 0) {
+                    console.error(`send_vote.py exited with code ${code}`);
+                    res.writeHead(500);
+                    isBusy = false;
+
+                    orderHistory[orderHistory.length - 1].status = 'Completed';
+                    saveOrderHistory();
+                    res.end('Internal Server Error');
+                } else {
+                    orderHistory[orderHistory.length - 1].status = 'Completed';
+                    saveOrderHistory();
+                    isBusy = false;
+                    res.writeHead(200);
+                    res.end('Vote sent successfully');
+                }
+            });
+        });
     }else if (req.method === 'GET' && url.pathname === '/send-vote') {
+        console.log("GET request received");
+        return;
         if (isBusy){
             return res.end('Server is busy sending votes... Please try again later.');
         }
