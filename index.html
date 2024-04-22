@@ -214,6 +214,7 @@
 </body>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        let wasBusy = false;
         fetch('/get-order-history')
             .then(response => response.json())
             .then(orders => {
@@ -255,6 +256,10 @@
                     const loader = document.querySelector('.loader');
                     submitButton.disabled = data.isBusy;
                     loader.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
+                    if (wasBusy && !data.isBusy) {
+                        window.location.reload();  // Reload the page once when loader disappears
+                    }
+                    wasBusy = data.isBusy;
                 })
                 .catch(error => console.error('Failed to check server status:', error));
         };
