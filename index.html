@@ -378,6 +378,7 @@
 </script>
 <script>
     document.getElementById('voteForm').addEventListener('submit', function(event) {
+        console.log('submitting form...');
         event.preventDefault(); // Prevent the default form submission
         const actionUrl = event.submitter.formAction || this.action; // Determine the action based on the clicked button
         console.log(actionUrl);
