@@ -56,6 +56,7 @@ function handleVote(param, fields, res) {
 // Create HTTP server
 const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    console.log(url.pathname);
     switch (url.pathname) {
         case '/':
             fs.readFile('index.html', (err, data) => {
