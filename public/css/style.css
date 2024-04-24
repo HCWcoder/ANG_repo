@@ -235,15 +235,15 @@ color: white;
     position: absolute;
     background: #ecebc4;
     border: 2px solid #007bff;
-    width: 30%;
+    width: 60vw;
     max-height: 300px;
     overflow-y: auto;
     display: none;
     z-index: 1000;
     padding: 10px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    left: 37%;
-    top: 13%;
+    left: 20vw;
+    top: 15vw;
 }
 .song-item {
 padding: 5px;
