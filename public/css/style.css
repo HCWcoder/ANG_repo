@@ -12,8 +12,8 @@ h1 {
     margin-top: 50px;
 }
 form {
-    width: 80%;
-    max-width: 600px;
+    width: 100%;
+    /* max-width: 600px; */
     margin: 0 auto;
     padding: 20px;
     background-color: #ffffff00;
@@ -26,6 +26,7 @@ label {
 }
 input, select {
     width: 60%;
+    height: 100%;
     padding: 10px;
     margin-bottom: 10px;
     border: 1px solid #ccc;
@@ -33,9 +34,9 @@ input, select {
 }
 button {
     font-family: 'Passion One';
-    width: 100%;
+    width: 17vw;
     padding: 10px;
-    font-size: 20px;
+    font-size: 27px;
     background-color: #007bff;
     color: white;
     border: none;
@@ -95,11 +96,12 @@ button:hover {
     align-items: center;
 }
 #country {
+    height: 100%;
     width: 20%;
     min-width: 60px;
 }
 #plays {
-    width: 70%; /* Adjusted width for the slider */
+    width: 90%; /* Adjusted width for the slider */
     cursor: pointer;
 }
 #playsValue {
@@ -119,10 +121,11 @@ button:disabled {
     cursor: not-allowed;
 }
 .history-container {
-    width: 100%;
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: 20px;
+    width: 100vw;
+    /* max-width: 1000px; */
+    /* margin: 0 auto; */
+    /* padding: 20px; */
+    text-align: -webkit-center;
     background-color: #ecebc4;
     border-radius: 10px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
@@ -132,7 +135,8 @@ h2 {
     text-align: center;
 }
 table {
-    width: 100%;
+    width: 90%;
+    font-size: 2vw;
     border-collapse: collapse;
     font-family: monospace;
     background: #23232370;
@@ -165,7 +169,7 @@ color: white;
     /* width: 50%; */
     width: 100%;
     /* height: 10px; */
-    max-width: 600px;
+    /* max-width: 600px; */
     margin: 0 auto;
     padding: 15px;
     background-color: #dbd20430;
@@ -227,7 +231,7 @@ color: white;
     position: absolute;
     background: #ecebc4;
     border: 2px solid #007bff;
-    width: 20%;
+    width: 30%;
     max-height: 300px;
     overflow-y: auto;
     display: none;
