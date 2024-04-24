@@ -31,6 +31,7 @@ input, select {
     margin-bottom: 10px;
     border: 1px solid #ccc;
     border-radius: 5px;
+    margin-left: 10px;
 }
 button {
     font-family: 'Passion One';
@@ -94,6 +95,7 @@ button:hover {
     justify-content: space-between;
     align-content: center;
     align-items: center;
+    margin: 35px;
 }
 #country {
     height: 100%;
