@@ -100,7 +100,9 @@ button:hover {
 #country {
     height: 100%;
     width: 20%;
-    min-width: 60px;
+    /* min-width: 60px; */
+    font-size: large;
+    background-color: white;
 }
 #plays {
     width: 90%; /* Adjusted width for the slider */
