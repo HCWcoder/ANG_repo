@@ -247,7 +247,7 @@ color: white;
     z-index: 1000;
     padding: 10px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    left: 20vw;
+    left: 10vw;
     top: 15vw;
 }
 .song-item {
@@ -319,6 +319,6 @@ box-shadow: 0 5px 45px 4px rgba(238, 69, 64, .3);
         }
     
         .history-container, .song-list-container {
-            width: 100%;
+            width: 88%;
         }
     }
