@@ -138,6 +138,10 @@ button:disabled {
 }
 h2 {
     text-align: center;
+    display: flex;
+    align-content: center;
+    align-items: center;
+    justify-content: center;
 }
 table {
     width: 90%;
@@ -254,14 +258,16 @@ cursor: pointer;
 background-color: #f0f0f0;
 }
 .tesd {
-width: 16%;
+width: 17%;
 padding: 10px;
-background-color: #1551098b;
+background-color: #EE4540;
 color: white;
 border: none;
 border-radius: 5px;
 cursor: pointer;
 margin: 0px 10px 0 0;
+box-shadow: 0 5px 45px 4px rgba(238, 69, 64, .3);
+    border-radius: 10px;
 /* margin-left: 19%; */
 }
 
