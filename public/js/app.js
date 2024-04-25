@@ -22,7 +22,7 @@
         {id: "5252117", name: "اجازة (مع بوسي) [ريمكس جيمي حداد]"}
     ];
 
-    function toggleSongList() {
+    function toggleSongList(event) {
         const listContainer = document.getElementById('songList');
         if (listContainer.style.display === 'none' || listContainer.style.display === '') {
             listContainer.style.display = 'block';
@@ -30,6 +30,8 @@
         } else {
             listContainer.style.display = 'none';
         }
+        // Stop event propagation to prevent immediate closing
+        event.stopPropagation();
     };
 
     function populateSongList() {
@@ -136,6 +138,14 @@
         .catch(error => {
             console.error('Error:', error);
         });
+    });
+    document.body.addEventListener('click', function(event) {
+        const listContainer = document.getElementById('songList');
+        const target = event.target;
+        if (target !== listContainer && !listContainer.contains(target)) {
+            // Click occurred outside the songList container
+            listContainer.style.display = 'none';
+        }
     });
     function updatePlaysValue(value) {
         const minutesPerThousand = 6; // Assume each 1000 plays takes 6 minutes

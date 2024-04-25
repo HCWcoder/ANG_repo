@@ -216,7 +216,7 @@ color: white;
 
 .tooltip .tooltiptext {
     visibility: hidden;
-    width: 320px;
+    width: 100%;
     background-color: black;
     color: #fff;
     text-align: center;
