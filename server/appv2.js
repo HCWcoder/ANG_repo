@@ -112,6 +112,8 @@ function handleVote(param, fields, res) {
         playsx = data.plays;
         orderHistory[orderHistory.length - 1].likesy = data.likes;
         orderHistory[orderHistory.length - 1].playsy = data.plays;
+        
+        saveOrderHistory();
     })
     .catch(error => console.error('Failed to get likes and plays:', error));
 }
