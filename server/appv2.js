@@ -183,5 +183,4 @@ const server = http.createServer((req, res) => {
 server.listen(3000, () => {
     console.log('Server is running on port 3000');
     orderHistory = fs.readFile(orderHistoryFile, (err, data) => err ? console.error('Error reading file:', err) : orderHistory = JSON.parse(data));
-    getPlayLikes(1122520672);
 });
