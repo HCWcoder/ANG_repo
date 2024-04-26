@@ -69,7 +69,7 @@ def url_unpack(line):
 		k: v for k, v in map(lambda x: x.split("="), line.split(";"))
 	}
 
-def get_accounts(file_name="data\registered.txt"):
+def get_accounts(file_name="./data/registered.txt"):
 	if not isfile(file_name):
 		print(f"{Fore.RED}Can't access {file_name} file...{Style.RESET_ALL}")
 		return []
