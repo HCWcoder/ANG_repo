@@ -82,10 +82,10 @@
                         totalPlays += parseInt(order.plays);
                         break;
                     case 'Like':
-                        totalLikes += parseInt(order.likes);
+                        totalLikes += parseInt(order.plays);
                         break;
                     case 'Follow':
-                        totalFollows += parseInt(order.follows);
+                        totalFollows += parseInt(order.plays);
                         break;
                     default:
                         break;
