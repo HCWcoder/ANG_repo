@@ -283,6 +283,10 @@ box-shadow: 0 5px 45px 4px rgba(238, 69, 64, .3);
 /* margin-left: 19%; */
 }
 
+.tesd :disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
 .tesd:hover {
     width: 16%;
     padding: 10px;
