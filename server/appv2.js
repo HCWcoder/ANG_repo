@@ -64,7 +64,7 @@ function handleVote(param, fields, res) {
     const songIdFinal = songIdSplit[songIdSplit.length - 1];
 
     const actionType = actionMap[param] || 'Unknown Action';
-    const pythonScript = 'python';
+    const pythonScript = 'python3';
     const args = [
         'send_vote.py',
         param, songIdFinal,
