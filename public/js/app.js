@@ -161,6 +161,8 @@
             // startTimer(durationInSeconds); // Start the timer with the calculated duration
             startTimerAndSendToServer(durationInSeconds);
             localStorage.setItem('timerDuration', durationInSeconds); // Store the duration in local storage
+            // Refresh the page after the timer ends
+            window.location.reload();
         } else {
             console.error("Failed to extract total minutes from text:", playsText);
         }
