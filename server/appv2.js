@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const formidable = require('formidable');
 const { spawn } = require('child_process');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 // Directory paths
 const publicDir = path.join(__dirname, '../public');
@@ -18,6 +20,34 @@ function saveOrderHistory() {
     fs.writeFile(orderHistoryFile, JSON.stringify(orderHistory, null, 2), err => {
         if (err) console.error('Error writing file:', err);
     });
+}
+
+async function getPlayLikes(songId) {
+    try {
+        const headers = {
+            'Upgrade-Insecure-Requests': '1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+        };
+
+        const url = `https://play.anghami.com/song/${songId}`;
+        const response = await axios.get(url, { headers: headers });
+        const $ = cheerio.load(response.data);
+
+        const likesSelector = 'div[class="section-details flex"] > span:nth-of-type(2) > div[class="font-weight-bold value"]';
+        const playsSelector = 'div[class="section-details flex"] > span:nth-of-type(3) > div[class="font-weight-bold value"]';
+
+        const likes = $(likesSelector).text().trim();
+        const plays = $(playsSelector).text().trim();
+
+        console.log(likes, plays);
+        return { likes, plays };
+    } catch (error) {
+        console.error('Error fetching data:', error);
+        return { likes: 'Error', plays: 'Error' };
+    }
 }
 
 // Handle sending vote with a Python script
@@ -34,7 +64,7 @@ function handleVote(param, fields, res) {
     const songIdFinal = songIdSplit[songIdSplit.length - 1];
 
     const actionType = actionMap[param] || 'Unknown Action';
-    const pythonScript = 'python3';
+    const pythonScript = 'python';
     const args = [
         'send_vote.py',
         param, songIdFinal,
@@ -43,18 +73,28 @@ function handleVote(param, fields, res) {
         '-t', '35',
         '--old_tokens'
     ];
+    var likesx = 0;
+    var playsx = 0;
+    getPlayLikes(songIdFinal)  // Replace 1122520672 with any valid song ID
+    .then(data => {
+        orderHistory.push({
+            id: orderHistory.length + 1,
+            songId: songIdFinal,
+            plays: plays[0],
+            country: country[0],
+            action: actionType,
+            status: 'Pending',
+            likesx: data.likes,
+            playsx: data.plays,
+            likesy: 0,
+            playsy: 0
+        });
+        saveOrderHistory();
+    })
+    .catch(error => console.error('Failed to get likes and plays:', error));
 
     isBusy = true;
-    orderHistory.push({
-        id: orderHistory.length + 1,
-        songId: songIdFinal,
-        plays: plays[0],
-        country: country[0],
-        action: actionType,
-        status: 'Pending'
-    });
-    saveOrderHistory();
-
+    
     const pythonProcess = spawn(pythonScript, args);
     pythonProcess.stdout.on('data', data => console.log(`send_vote.py output: ${data}`));
     pythonProcess.stderr.on('data', data => console.error(`send_vote.py error: ${data}`));
@@ -66,6 +106,14 @@ function handleVote(param, fields, res) {
         res.writeHead(code === 0 ? 200 : 200);
         res.end(code === 0 ? 'Vote sent successfully' : 'Vote sent successfully');
     });
+    getPlayLikes(songIdFinal)  // Replace 1122520672 with any valid song ID
+    .then(data => {
+        likesx = data.likes;
+        playsx = data.plays;
+        orderHistory[orderHistory.length - 1].likesy = data.likes;
+        orderHistory[orderHistory.length - 1].playsy = data.plays;
+    })
+    .catch(error => console.error('Failed to get likes and plays:', error));
 }
 
 const serve = serveStatic(publicDir, {
@@ -135,4 +183,5 @@ const server = http.createServer((req, res) => {
 server.listen(3000, () => {
     console.log('Server is running on port 3000');
     orderHistory = fs.readFile(orderHistoryFile, (err, data) => err ? console.error('Error reading file:', err) : orderHistory = JSON.parse(data));
+    getPlayLikes(1122520672);
 });
