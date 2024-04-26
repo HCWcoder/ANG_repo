@@ -112,10 +112,12 @@
             fetch('/check-busy')
                 .then(response => response.json())
                 .then(data => {
-                    const submitButton = document.querySelector('#voteForm button');
+                    const buttons = document.querySelectorAll('button');
+                    buttons.forEach(button => {
+                        button.disabled = data.isBusy;
+                    });
                     const loader = document.querySelector('.loader');
-                    const loaderx = document.querySelector('loader-container');
-                    submitButton.disabled = data.isBusy;
+                    const loaderx = document.querySelector('.loader-container');
                     loader.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
                     loaderx.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
                     if (wasBusy && !data.isBusy) {
