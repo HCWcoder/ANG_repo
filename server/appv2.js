@@ -7,11 +7,12 @@ const formidable = require('formidable');
 const { spawn } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
-
+const bodyParser = require('body-parser');
 // Directory paths
 const publicDir = path.join(__dirname, '../public');
 const dataDir = path.join(__dirname, '../data');
 const orderHistoryFile = path.join(dataDir, 'orderHistory.json');
+const timerFile = path.join(dataDir, 'timerEndTime.json');
 let isBusy = false;
 let orderHistory = [];
 
@@ -73,6 +74,17 @@ function parseLikesPlays(text) {
         return unit ? Math.round(value * multiplier[unit]) : value;
     }
     return 0; // Return 0 if no match found
+}
+
+function startTimer(duration) {
+    let timer = duration;
+    const intervalId = setInterval(() => {
+        if (--timer < 0) {
+            clearInterval(intervalId);
+            timer = duration; // Reset timer when it reaches 0
+        }
+        io.emit('timerUpdate', timer); // Send timer update to all connected clients
+    }, 1000);
 }
 
 // Handle sending vote with a Python script
@@ -163,6 +175,46 @@ const server = http.createServer((req, res) => {
                     }
                 });
                 break;
+            case '/timerget':
+                fs.readFile(timerFile, (err, data) => {
+                    if (err) {
+                        console.error('Error reading timer file:', err);
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Internal Server Error' }));
+                    } else {
+                        const { endTime } = JSON.parse(data);
+                        const responseData = JSON.stringify({ endTime });
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(responseData);
+                    }
+                });
+                break;
+                case '/timerpost':
+                    let body = '';
+                    req.on('data', (chunk) => {
+                        body += chunk.toString();
+                    });
+                    req.on('end', () => {
+                        try {
+                            const { endTime } = JSON.parse(body);
+                            //console.log(endTime);
+                            fs.writeFile(timerFile, JSON.stringify({ endTime }), (err) => {
+                                if (err) {
+                                    console.error('Error writing timer file:', err);
+                                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                                    res.end(JSON.stringify({ error: 'Internal Server Error' }));
+                                } else {
+                                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                                    res.end(JSON.stringify({ message: 'Timer end time saved successfully' }));
+                                }
+                            });
+                        } catch (error) {
+                            console.error('Error parsing request body:', error);
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'Invalid JSON in request body' }));
+                        }
+                    });
+                    break;
             case '/send-vote':
             case '/send-vote2':
             case '/send-vote3':

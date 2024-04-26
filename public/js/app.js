@@ -150,18 +150,17 @@
         }
         console.log('submitting form...');
         const actionUrl = event.submitter.formAction || this.action; // Determine the action based on the clicked button
-        console.log(actionUrl);
+        //console.log(actionUrl);
         const formData = new FormData(this);
         var playsText = document.getElementById('playsValue').innerText;
         // Extract the number from the text, assuming it follows a format like "+50 [3.00 minutes]"
-        var totalMinutes = parseInt(playsText.match(/[\d\.]+/)[0], 10);
-        const minutesPerThousand = 6; // Assume each 1000 plays takes 6 minutes
-        var totalMinute = (totalMinutes / 1000) * minutesPerThousand;
-        console.log('totalMinutes', totalMinute);
-        if (!isNaN(totalMinute)) { // Check if the conversion result is a number
-            setTimeout(function() {
-                startTimer(totalMinute * 60); // Convert minutes to seconds for the timer
-            }, 4000); // 3000 milliseconds = 3 seconds
+        var totalMinutes = parseFloat(playsText.match(/\[(.*?) minutes\]/)[1]);
+        var durationInSeconds = totalMinutes * 60;
+        //console.log('totalMinutes', durationInSeconds);
+        if (!isNaN(durationInSeconds)) { // Check if the conversion result is a number
+            // startTimer(durationInSeconds); // Start the timer with the calculated duration
+            startTimerAndSendToServer(durationInSeconds);
+            localStorage.setItem('timerDuration', durationInSeconds); // Store the duration in local storage
         } else {
             console.error("Failed to extract total minutes from text:", playsText);
         }
@@ -192,7 +191,9 @@
     }
     
     function startTimer(duration) {
+        //console.log('Timer started with duration:', duration);
         var timer = duration, minutes, seconds;
+        //console.log('Timer duration:', timer);
         const display = document.getElementById('timerDisplay');
         display.style.display = 'block'; // Show the timer when starting
         clearInterval(window.countdown); // Clear existing timer if any
@@ -210,10 +211,69 @@
                 display.textContent = "00:00"; // Reset timer when it reaches 0
                 setTimeout(function() {
                     display.style.display = 'none'; // Hide the timer
+                    localStorage.removeItem('timerDuration'); // Remove stored duration after completion
                 }, 3000); // 3000 milliseconds = 3 seconds
+            } else {
+                localStorage.setItem('timerDuration', timer); // Update local storage every second
             }
         }, 1000);
     }
+    // Function to start the timer and send the end time to the server
+function startTimerAndSendToServer(duration) {
+    const endTime = Date.now() + duration * 1000; // Calculate end time
+    fetch('/timerpost', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ endTime }) // Send end time to server
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to send timer end time to server');
+        }
+        console.log('Timer end time sent to server successfully');
+    })
+    .catch(error => {
+        console.error('Error sending timer end time to server:', error);
+    });
+
+    startTimer(duration); // Start the timer locally
+}
+    function retrieveTimerEndTimeFromServer() {
+        fetch('/timerget')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to retrieve timer end time from server');
+            }
+            return response.json();
+        })
+        .then(data => {
+            const { endTime } = data;
+            //console.log(endTime);
+            
+            if (endTime) {
+                //console.log('endTime', endTime);
+                const currentTime = Date.now();
+                //console.log('currentTime',currentTime);
+                //console.log('total', (endTime - currentTime));
+                if (currentTime < endTime) {
+                    const remainingTime = endTime - currentTime;
+                    //console.log(remainingTime);
+            
+                    if (remainingTime > 0) {
+                        startTimer(remainingTime/1000); // Start the timer with remaining time in milliseconds
+                    }
+                } 
+            }
+        })
+        .catch(error => {
+            console.error('Error retrieving timer end time from server:', error);
+        });
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        retrieveTimerEndTimeFromServer(); // Retrieve timer end time when the page loads
+    });
     document.addEventListener('DOMContentLoaded', function() {
         fetch('/get-unique-song-details')
             .then(response => response.json())
