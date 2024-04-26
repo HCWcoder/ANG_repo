@@ -114,8 +114,10 @@
                 .then(data => {
                     const submitButton = document.querySelector('#voteForm button');
                     const loader = document.querySelector('.loader');
+                    const loaderx = document.querySelector('loader-container');
                     submitButton.disabled = data.isBusy;
                     loader.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
+                    loaderx.style.display = data.isBusy ? 'block' : 'none'; // Show or hide the loader
                     if (wasBusy && !data.isBusy) {
                         window.location.reload();  // Reload the page once when loader disappears
                     }
