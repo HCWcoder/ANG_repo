@@ -90,6 +90,14 @@
                     default:
                         break;
                 }
+                let actionContent = '';
+                if (order.action === 'Play') {
+                    actionContent = order.playsx;
+                    actionContent2 = order.playsy;
+                } else if (order.action === 'Like') {
+                    actionContent = order.likesx;
+                    actionContent2 = order.likesy;
+                }
                 row.innerHTML = `
                     <td>
                         <a href="https://play.anghami.com/song/${order.songId}" target="_blank" title="https://play.anghami.com/song/${order.songId}">
@@ -99,6 +107,8 @@
                     <td>${order.plays}</td>
                     <td>${order.country}</td>
                     <td>${order.action || 'Play'}</td>
+                    <td>${actionContent}</td>
+                    <td>${actionContent2}</td>
                     <td class="${statusColor}">${order.status}</td>
                 `;
                 tableBody.appendChild(row);

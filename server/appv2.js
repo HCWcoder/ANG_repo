@@ -22,32 +22,57 @@ function saveOrderHistory() {
     });
 }
 
-async function getPlayLikes(songId) {
-    try {
-        const headers = {
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-        };
+async function getPlayLikes(songId, maxRetries = 10, retryDelay = 2000) {
+    let retries = 0;
+    while (retries < maxRetries) {
+        try {
+            const headers = {
+                'Upgrade-Insecure-Requests': '1',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+            };
 
-        const url = `https://play.anghami.com/song/${songId}`;
-        const response = await axios.get(url, { headers: headers });
-        const $ = cheerio.load(response.data);
+            const url = `https://play.anghami.com/song/${songId}`;
+            const response = await axios.get(url, { headers: headers });
+            const $ = cheerio.load(response.data);
 
-        const likesSelector = 'div[class="section-details flex"] > span:nth-of-type(2) > div[class="font-weight-bold value"]';
-        const playsSelector = 'div[class="section-details flex"] > span:nth-of-type(3) > div[class="font-weight-bold value"]';
+            const likesSelector = 'div[class="section-details flex"] > span:nth-of-type(2) > div[class="font-weight-bold value"]';
+            const playsSelector = 'div[class="section-details flex"] > span:nth-of-type(3) > div[class="font-weight-bold value"]';
 
-        const likes = $(likesSelector).text().trim();
-        const plays = $(playsSelector).text().trim();
+            const likesText = $(likesSelector).text().trim();
+            const playsText = $(playsSelector).text().trim();
 
-        console.log(likes, plays);
-        return { likes, plays };
-    } catch (error) {
-        console.error('Error fetching data:', error);
-        return { likes: 'Error', plays: 'Error' };
+            // Parse likes and plays
+            const likes = parseLikesPlays(likesText);
+            const plays = parseLikesPlays(playsText);
+            console.log('Likes:', likes, 'Plays:', plays);
+            if (likes === 0 || plays === 0) {
+                retries++;
+                await new Promise(resolve => setTimeout(resolve, retryDelay)); // Wait before retrying
+                continue; // Retry without returning
+            }
+
+            return { likes, plays };
+        } catch (error) {
+            console.error('Error fetching data:', error);
+            retries++;
+            await new Promise(resolve => setTimeout(resolve, retryDelay)); // Wait before retrying
+        }
     }
+    return { likes: 'Error', plays: 'Error' }; // Return error if max retries reached
+}
+
+function parseLikesPlays(text) {
+    const multiplier = { 'K': 1000, 'M': 1000000 }; // Multipliers for 'K' (thousands) and 'M' (millions)
+    const match = text.match(/^([\d.]+)([KM])?\s/); // Extract numeric part and multiplier
+    if (match) {
+        const value = parseFloat(match[1]);
+        const unit = match[2];
+        return unit ? Math.round(value * multiplier[unit]) : value;
+    }
+    return 0; // Return 0 if no match found
 }
 
 // Handle sending vote with a Python script
@@ -102,20 +127,18 @@ function handleVote(param, fields, res) {
         isBusy = false;
         orderHistory[orderHistory.length - 1].status = code === 0 ? 'Completed' : 'Completed';
         saveOrderHistory();
+        getPlayLikes(songIdFinal)  // Replace 1122520672 with any valid song ID
+        .then(data => {
+            orderHistory[orderHistory.length - 1].likesy = data.likes;
+            orderHistory[orderHistory.length - 1].playsy = data.plays;
+            saveOrderHistory();
+        })
+        .catch(error => console.error('Failed to get likes and plays:', error));
 
         res.writeHead(code === 0 ? 200 : 200);
         res.end(code === 0 ? 'Vote sent successfully' : 'Vote sent successfully');
     });
-    getPlayLikes(songIdFinal)  // Replace 1122520672 with any valid song ID
-    .then(data => {
-        likesx = data.likes;
-        playsx = data.plays;
-        orderHistory[orderHistory.length - 1].likesy = data.likes;
-        orderHistory[orderHistory.length - 1].playsy = data.plays;
-        
-        saveOrderHistory();
-    })
-    .catch(error => console.error('Failed to get likes and plays:', error));
+    
 }
 
 const serve = serveStatic(publicDir, {
