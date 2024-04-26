@@ -69,7 +69,7 @@ def url_unpack(line):
 		k: v for k, v in map(lambda x: x.split("="), line.split(";"))
 	}
 
-def get_accounts(file_name="registered.txt"):
+def get_accounts(file_name="~\\registered.txt"):
 	if not isfile(file_name):
 		print(f"{Fore.RED}Can't access {file_name} file...{Style.RESET_ALL}")
 		return []
@@ -316,8 +316,8 @@ def main():
 	init()
 	separator()
 
-	if isfile("vote_sessions.json"):
-		with open("vote_sessions.json") as f:
+	if isfile("./data/vote_sessions.json"):
+		with open("./data/vote_sessions.json") as f:
 			SESSIONS = load(f)
 
 	mode = ""
@@ -397,5 +397,5 @@ if __name__ == "__main__":
 		#need add lock file
 		#lib lockfile
 		#or we can split files to write another types
-		with open("vote_sessions.json", "w") as f:
+		with open("./data/vote_sessions.json", "w") as f:
 			dump(SESSIONS, f, separators=(",", ":"))
