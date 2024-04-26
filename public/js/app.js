@@ -53,8 +53,14 @@
         fetch('/get-order-history')
             .then(response => response.json())
             .then(orders => {
-            document.getElementById('historyCount').innerText = `[${orders.length}]`;
+                document.getElementById('historyCount').innerText = `[${orders.length}]`;
             orders.sort((a, b) => b.id - a.id);
+            // Calculate total plays
+            // Initialize sums for plays, likes, and follows
+            let totalPlays = 0;
+            let totalLikes = 0;
+            let totalFollows = 0;
+
             const tableBody = document.querySelector('table tbody');
             orders.forEach(order => {
                 const row = document.createElement('tr');
@@ -70,6 +76,20 @@
                         statusColor = 'status-pending';
                         break;
                 }
+                // Update sums based on action type
+                switch (order.action) {
+                    case 'Play':
+                        totalPlays += parseInt(order.plays);
+                        break;
+                    case 'Like':
+                        totalLikes += parseInt(order.plays);
+                        break;
+                    case 'Follow':
+                        totalFollows += parseInt(order.plays);
+                        break;
+                    default:
+                        break;
+                }
                 row.innerHTML = `
                     <td>
                         <a href="https://play.anghami.com/song/${order.songId}" target="_blank" title="https://play.anghami.com/song/${order.songId}">
@@ -83,6 +103,10 @@
                 `;
                 tableBody.appendChild(row);
                 });
+                // Update the total sums in the HTML
+                document.getElementById('tPlays').innerText = `[${totalPlays}]`;
+                document.getElementById('tLikes').innerText = `[${totalLikes}]`;
+                document.getElementById('tFollow').innerText = `[${totalFollows}]`;
             });
         const checkServerBusy = () => {
             fetch('/check-busy')

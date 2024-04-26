@@ -9,7 +9,7 @@ body {
 }
 h1 {
     text-align: center;
-    margin-top: 50px;
+    /* margin-top: 50px; */
 }
 form {
     width: 100%;
@@ -19,6 +19,18 @@ form {
     background-color: #ffffff00;
     border-radius: 10px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+#tFollow,#tPlays, #tLikes, #asdd {
+    color: #EE4540;
+}
+.flex-1{
+    display: flex;
+    align-items: center;
+}
+.flex-2{
+    display: flex;
+    flex-direction: column;
+    margin-left: 10px;
 }
 label {
     display: block;
