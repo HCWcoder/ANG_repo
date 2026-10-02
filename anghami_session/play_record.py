@@ -1,0 +1,371 @@
+"""One synthetic legacy play record for the explicitly designated test track.
+
+This is an API integration test, not audio playback. The original function
+claims the metadata's full duration without fetching or decoding any audio.
+Authentication checks are read-only; the adapter permits exactly one event.
+"""
+
+import ast
+from datetime import datetime, timezone
+import json
+import math
+import os
+from pathlib import Path
+from random import random
+import tempfile
+import time
+from urllib.parse import parse_qsl, urlsplit
+from uuid import uuid4
+
+from curl_cffi.const import CurlInfo
+from curl_cffi.requests.session import RetryStrategy
+
+from .client import GATEWAY_URL, validate_session
+from .errors import SessionError
+from .media_gateway import PlaybackGateway
+from .test_settings import DEFAULT_TEST_SONG_ID, validate_test_song_id
+
+TEST_SONG_ID = DEFAULT_TEST_SONG_ID
+TEST_ACCOUNT_ROWS = frozenset({1, 2, 3, 4, 5, 7})
+_SOURCE = Path(__file__).resolve().parents[1] / "send_vote.py"
+_FUNCTIONS = {"get_song", "play_song", "build_gateway_params", "assert_response_ok"}
+_COUNTERS = {
+    "request_bytes": (CurlInfo.REQUEST_SIZE, "request_size"),
+    "upload_body_bytes": (CurlInfo.SIZE_UPLOAD_T, "upload_size"),
+    "download_body_bytes": (CurlInfo.SIZE_DOWNLOAD_T, "download_size"),
+    "response_header_bytes": (CurlInfo.HEADER_SIZE, "header_size"),
+}
+
+
+class _Failure(SessionError):
+    """Only fixed messages/codes from this module can enter the safe report."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _validated_test_song(song_id, declared_song_id, *, message="This test command is limited to the declared test song.") -> str:
+    """Bind a canonical requested ID to this run's immutable declared ID."""
+    try:
+        declared = validate_test_song_id(declared_song_id)
+        requested = validate_test_song_id(song_id)
+    except SessionError:
+        raise SessionError(message) from None
+    if requested != declared:
+        raise SessionError(message)
+    return requested
+
+
+def _load_legacy_functions(*, include_like: bool = False) -> dict:
+    """Execute selected definitions only, never legacy imports or setup."""
+    tree = ast.parse(_SOURCE.read_text(encoding="utf-8"), filename=str(_SOURCE))
+    selected = _FUNCTIONS | {"like_song"} if include_like else _FUNCTIONS
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in selected]
+    if len(functions) != len(selected) or {node.name for node in functions} != selected:
+        raise _Failure("legacy_source_invalid", "The original play-function dependencies were not found.")
+    endpoint_values = [
+        node.value for node in tree.body if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "GATEWAY_URL" for target in node.targets)
+    ]
+    if len(endpoint_values) != 1 or not isinstance(endpoint_values[0], ast.Constant) or endpoint_values[0].value != GATEWAY_URL:
+        raise _Failure("legacy_endpoint_invalid", "The original play function uses an unsupported endpoint.")
+    for node in functions:
+        annotations = [arg.annotation for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)]
+        annotations.extend(arg.annotation for arg in (node.args.vararg, node.args.kwarg) if arg is not None)
+        if node.decorator_list or node.returns is not None or any(value is not None for value in annotations):
+            raise _Failure("legacy_source_invalid", "The original play-function definitions are unsupported.")
+        # Default expressions execute when a definition loads. Permit literals only.
+        for value in (*node.args.defaults, *node.args.kw_defaults):
+            if value is not None:
+                ast.literal_eval(value)
+    namespace = {
+        "__builtins__": {
+            "getattr": getattr, "int": int, "str": str, "float": float,
+            "round": round, "AssertionError": AssertionError,
+        },
+        "dt": datetime, "random": random,
+        "GATEWAY_URL": endpoint_values[0].value,
+    }
+    if include_like:
+        namespace["uuid4"] = lambda: str(uuid4())
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(_SOURCE), "exec"), namespace)
+    return namespace
+
+
+def _journal(report: dict, report_path) -> None:
+    if report_path is None:
+        return
+    temporary = None
+    try:
+        target = Path(report_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, suffix=".json.tmp", delete=False) as output:
+            temporary = Path(output.name)
+            json.dump(report, output, indent=2, allow_nan=False)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, target)
+    except Exception:
+        raise _Failure("journal_failed", "The test report could not be saved. Check the report path before any further test.") from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _empty_counters() -> dict:
+    return {"request_count": 0, **{name: 0 for name in _COUNTERS}, "measurement_complete": True}
+
+
+def _record_bandwidth(report: dict, function: str, response=None) -> None:
+    record = report["bandwidth"][function]
+    record["request_count"] += 1
+    infos = getattr(response, "infos", {}) if response is not None else {}
+    for name, (info, attribute) in _COUNTERS.items():
+        value = infos.get(info) if isinstance(infos, dict) else None
+        if value is None and response is not None:
+            value = getattr(response, attribute, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            record[name] = None
+            record["measurement_complete"] = False
+        elif record[name] is not None:
+            record[name] += int(value)
+    total = report["bandwidth"]["total"]
+    for name in ("request_count", *_COUNTERS):
+        values = [report["bandwidth"][function][name] for function in ("get_song", "play_song")]
+        total[name] = None if any(value is None for value in values) else sum(values)
+    total["measurement_complete"] = all(report["bandwidth"][function]["measurement_complete"] for function in ("get_song", "play_song"))
+
+
+class _SafeResponse:
+    ok = True
+    status_code = 200
+    reason = "OK"
+    text = ""
+
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _LegacyAdapter:
+    def __init__(self, http, headers: dict, sid: str, fingerprint: str, report: dict, report_path, *, song_id=TEST_SONG_ID):
+        self.song_id = _validated_test_song(song_id, song_id)
+        self.http = http
+        self.headers = headers
+        self.sid = sid
+        self.fingerprint = fingerprint
+        self.report = report
+        self.report_path = report_path
+        self.metadata_requests = 0
+        self.event_attempts = 0
+        self.duration = None
+
+    def get(self, url, *, params, headers):
+        # The original function's obsolete browser headers are intentionally ignored.
+        operation = params.get("type") if isinstance(params, dict) else None
+        if (
+            url != GATEWAY_URL or operation not in {"GETsong", "REGISTERwebplay"}
+            or params.get("angh_type") != operation
+            or params.get("sid") != self.sid or params.get("appsid") != self.sid
+            or params.get("fingerprint") != self.fingerprint
+        ):
+            raise _Failure("request_scope_invalid", "The original play function attempted a request outside the selected session.")
+        identity = "songId" if operation == "GETsong" else "songid"
+        if str(params.get(identity)) != self.song_id:
+            raise _Failure("song_scope_invalid", "The original play function attempted a different song.")
+        function = "get_song" if operation == "GETsong" else "play_song"
+        if operation == "GETsong":
+            if self.metadata_requests or self.event_attempts:
+                raise _Failure("metadata_repeat_blocked", "The test permits one metadata request only.")
+            self.metadata_requests += 1
+            self.report["phase"] = "metadata"
+        else:
+            if self.event_attempts or self.duration is None:
+                raise _Failure("event_repeat_blocked", "The test permits one event after validated song metadata only.")
+            try:
+                claimed = float(params["playsecs"])
+                fraction = float(params["playper"])
+                if not math.isfinite(claimed) or not self.duration - 0.000001 <= claimed <= self.duration + 0.01 or fraction != 1:
+                    raise ValueError
+            except (KeyError, TypeError, ValueError):
+                raise _Failure("legacy_claim_invalid", "The original play function produced an unsupported synthetic duration.") from None
+            self.event_attempts += 1
+            self.report.update({
+                "phase": "event", "event_attempted": True, "event_attempts": 1,
+                "event_accepted": None, "event_result": "unknown", "api_status": "unknown",
+                "reported_play_seconds": claimed, "reported_play_fraction": fraction,
+            })
+            # Persist the ambiguity before transport: a timeout must never cause a resend.
+            _journal(self.report, self.report_path)
+        response = None
+        try:
+            response = self.http.get(
+                GATEWAY_URL, params=dict(params), headers=dict(self.headers),
+                timeout=25, allow_redirects=False,
+            )
+        except Exception:
+            _record_bandwidth(self.report, function)
+            raise _Failure("transport_failed", "The test request failed in transport. An attempted event has an unknown result; do not automatically resend it.") from None
+        _record_bandwidth(self.report, function, response)
+        try:
+            status = getattr(response, "status_code", None)
+            if isinstance(status, int) and not isinstance(status, bool):
+                self.report["metadata_http_status" if operation == "GETsong" else "event_http_status"] = status
+            if status != 200:
+                raise _Failure("http_rejected", "The test gateway did not return a successful HTTP response.")
+            try:
+                payload = response.json()
+            except Exception:
+                raise _Failure("response_invalid", "The test gateway returned an unexpected response format.") from None
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        if operation == "GETsong":
+            if isinstance(payload, dict) and payload.get("status") == "failed":
+                message = payload.get("message")
+                if (
+                    isinstance(message, str)
+                    and "cannot play this song in the country" in message.casefold()
+                    and "license rights" in message.casefold()
+                ):
+                    raise _Failure(
+                        "metadata_region_unavailable",
+                        "Anghami reports that this song is unavailable in the current country "
+                        "because of licensing rights. No play event was sent.",
+                    )
+            try:
+                if (
+                    not isinstance(payload, dict) or isinstance(payload.get("status"), bool)
+                    or payload.get("status") not in (1, "1", "ok") or payload.get("error")
+                    or str(payload.get("id")) != self.song_id or isinstance(payload.get("duration"), bool)
+                ):
+                    raise ValueError
+                duration = float(payload["duration"])
+                if not math.isfinite(duration) or duration <= 0:
+                    raise ValueError
+            except (KeyError, TypeError, ValueError):
+                raise _Failure("metadata_invalid", "The test song metadata did not contain the expected identity and a valid duration.") from None
+            self.duration = duration
+            self.report.update({"metadata_verified": True, "metadata_duration_seconds": duration})
+            # Only the fields required by the original function leave this adapter.
+            return _SafeResponse({"status": 1, "id": self.song_id, "duration": duration})
+        if not isinstance(payload, dict):
+            raise _Failure("response_invalid", "The event response was not valid JSON metadata.")
+        if payload.get("status") == "failed" or payload.get("error"):
+            self.report.update({"event_accepted": False, "event_result": "rejected", "api_status": "failed"})
+            raise _Failure("event_rejected", "The test gateway did not accept the synthetic event.")
+        if payload.get("status") != "ok":
+            raise _Failure("response_invalid", "The event response did not confirm acceptance or rejection. Do not automatically resend it.")
+        self.report.update({"event_accepted": True, "event_result": "accepted", "api_status": "ok"})
+        return _SafeResponse({"status": "ok"})
+
+
+def _selected_session(saved: dict) -> tuple[dict, str, str]:
+    saved = validate_session(saved)
+    if not saved.get("account_email"):
+        raise _Failure("account_identity_missing", "The selected session has no saved account identity.")
+    template = saved["requests"]["relations"]
+    query = parse_qsl(urlsplit(template["url"]).query, keep_blank_values=True)
+    values = {name: [value for key, value in query if key == name] for name in ("sid", "appsid", "fingerprint")}
+    if any(len(items) > 1 for items in values.values()):
+        raise _Failure("session_ambiguous", "The selected session has ambiguous request credentials.")
+    sid = (values["sid"] or values["appsid"] or [""])[0]
+    fingerprint = (values["fingerprint"] or [""])[0]
+    if (
+        not sid or sid == "undefined" or not fingerprint or fingerprint == "undefined"
+        or (values["sid"] and values["appsid"] and values["sid"] != values["appsid"])
+    ):
+        raise _Failure("session_credentials_missing", "The selected session has no unambiguous request SID and fingerprint.")
+    return dict(template["headers"]), sid, fingerprint
+
+
+def run_play_record_test(session, song_id, *, report_path=None, declared_song_id=TEST_SONG_ID) -> dict:
+    """Submit at most one synthetic record for the declared test track.
+
+    The caller enforces the authorized source-row cohort. This function binds
+    the operation to one validated session, checks its server account identity,
+    and restricts the song and legacy operations itself. No media is requested.
+    """
+    song_id = _validated_test_song(
+        song_id, declared_song_id,
+        message="Synthetic play-record tests are restricted to test song configured for this run.",
+    )
+    report = {
+        "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+        "song_id": song_id, "passed": False, "synthetic": True,
+        "audio_bytes": 0, "browser_required": False, "password_required": False,
+        "downstream_statistics_verified": False, "automatic_retry": False,
+        "authenticated": False, "negative_control_passed": False,
+        "server_account_identity_verified": False, "metadata_verified": False,
+        "metadata_duration_seconds": None, "reported_play_seconds": None,
+        "reported_play_fraction": None, "event_attempted": False,
+        "event_attempts": 0, "event_accepted": False,
+        "event_result": "not_attempted", "api_status": "not_attempted",
+        "phase": "session_validation",
+        "bandwidth": {
+            "measurement": "libcurl CurlInfo; numeric byte counts only",
+            "scope": "get_song metadata and play_song event requests; authentication preflight excluded",
+            "get_song": _empty_counters(), "play_song": _empty_counters(), "total": _empty_counters(),
+        },
+    }
+    proxy_summary = getattr(session, "proxy_summary", None)
+    if proxy_summary is not None:
+        report["proxy"] = proxy_summary
+    started = time.perf_counter()
+    http = None
+    previous_retry = None
+    retry_overridden = False
+    try:
+        _journal(report, report_path)
+        headers, sid, fingerprint = _selected_session(session._saved)
+        report["phase"] = "legacy_source"
+        functions = _load_legacy_functions()
+        http = session._http
+        if hasattr(http, "retry"):
+            previous_retry = http.retry
+            http.retry = RetryStrategy(count=0)
+            retry_overridden = True
+        report["phase"] = "preflight"
+        checked = session.check(negative_control=True)
+        if (
+            not isinstance(checked, dict) or checked.get("authenticated") is not True
+            or not isinstance(checked.get("without_session"), dict)
+            or checked["without_session"].get("authentication_rejected") is not True
+        ):
+            raise _Failure("preflight_failed", "The selected session did not pass authentication and its negative control.")
+        report.update({"authenticated": True, "negative_control_passed": True, "phase": "account_identity"})
+        PlaybackGateway(session).bootstrap()
+        report["server_account_identity_verified"] = True
+        adapter = _LegacyAdapter(http, headers, sid, fingerprint, report, report_path, song_id=song_id)
+        functions["play_song"](adapter, song_id, fingerprint, sid)
+        if adapter.event_attempts != 1 or report["event_accepted"] is not True:
+            raise _Failure("event_incomplete", "The original play function did not complete the expected single test event.")
+        report.update({"phase": "complete", "passed": True, "elapsed_seconds": round(time.perf_counter() - started, 6)})
+        _journal(report, report_path)
+        return report
+    except Exception as exc:
+        report.update({
+            "failed_phase": report["phase"], "phase": "failed",
+            "error_code": exc.code if isinstance(exc, _Failure) else "test_failed",
+            "elapsed_seconds": round(time.perf_counter() - started, 6),
+        })
+        try:
+            _journal(report, report_path)
+        except _Failure:
+            raise SessionError("The test report could not be saved. An attempted event may have an unknown result; do not automatically resend it.") from None
+        message = str(exc) if isinstance(exc, _Failure) else "The synthetic play-record test failed. Check the safe report; do not automatically resend an attempted event."
+        raise SessionError(message) from None
+    finally:
+        if retry_overridden:
+            http.retry = previous_retry

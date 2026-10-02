@@ -51,8 +51,8 @@ REGISTERED_ACCOUNTS = []
 ACCOUNTS_NEED = args.accounts
 LOCK_OBJECT_FOR_PRINT = Lock()
 PROXIES = {
-	"EG": "http://mrrocat:v1wwAC7RucFlArPc_country-Egypt@proxy.packetstream.io:31112",
-	"RU": "http://mrrocat:v1wwAC7RucFlArPc_country-Russia@proxy.packetstream.io:31112"
+	"EG": "http://mrrocat:v1wwAC7RucFlArPc_country-EG:proxy.packetstream.io:31112",
+	"RU": "http://mrrocat:v1wwAC7RucFlArPc_country-RU@proxy.packetstream.io:31112"
 }
 TWO_CAPTCHA_TOKEN = "%PLACE_HERE_TOKEN%"
 
@@ -238,6 +238,41 @@ def get_session_fingerprint(session, session_uuid, session_hash):
 
 	return session_fingerprint
 
+def _read_cookie_value(cookie_store, key):
+	if cookie_store is None:
+		return None
+	if hasattr(cookie_store, "get"):
+		return cookie_store.get(key)
+	return None
+
+def _store_fingerprint_cookies(session, fingerprint, fingerprint_id):
+	if fingerprint:
+		session.cookies.set("fingerprint", fingerprint)
+	if fingerprint_id:
+		session.cookies.set("xxlfingerprint", fingerprint_id)
+
+def initialize_browser_fingerprint(session, session_uuid=None, fallback_cookies=None):
+	fingerprint_id = session_uuid or uuid4()
+	session_hash = b64encode(js_hash(fingerprint_id))
+	try:
+		fingerprint = get_session_fingerprint(
+			session, fingerprint_id, session_hash
+		)
+		_store_fingerprint_cookies(session, fingerprint, fingerprint_id)
+		return fingerprint, fingerprint_id
+	except Exception:
+		cookie_sources = []
+		if fallback_cookies is not None:
+			cookie_sources.append(fallback_cookies)
+		cookie_sources.append(session.cookies)
+		for cookie_source in cookie_sources:
+			fingerprint = _read_cookie_value(cookie_source, "fingerprint")
+			stored_id = _read_cookie_value(cookie_source, "xxlfingerprint") or session_uuid
+			if fingerprint:
+				_store_fingerprint_cookies(session, fingerprint, stored_id)
+				return fingerprint, stored_id
+		raise
+
 def get_email_exists(session, email, session_uuid):
 	params = {
 		"lang": "en",
@@ -268,8 +303,9 @@ def get_email_exists(session, email, session_uuid):
 
 def login_account(session, solver, email, password):
 	session_uuid = uuid4()
-	session_hash = b64encode(js_hash(session_uuid))
-	session_fingerprint = get_session_fingerprint(session, session_uuid, session_hash)
+	session_fingerprint, session_uuid = initialize_browser_fingerprint(
+		session, session_uuid
+	)
 
 	if not get_email_exists(session, email, session_uuid):
 		raise Exception("Account doesn't exist")
@@ -414,8 +450,9 @@ def register_account(session, email):
 
 def confirm_email(session, url):
 	session_uuid = uuid4()
-	session_hash = b64encode(js_hash(session_uuid))
-	session_fingerprint = get_session_fingerprint(session, session_uuid, session_hash)
+	session_fingerprint, session_uuid = initialize_browser_fingerprint(
+		session, session_uuid
+	)
 
 	response = session.get(url)
 

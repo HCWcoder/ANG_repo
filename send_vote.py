@@ -5,6 +5,7 @@ from json import load, dump
 from os.path import isfile
 from random import random
 from time import sleep
+from urllib.parse import quote_plus
 import ctypes
 
 
@@ -28,9 +29,10 @@ LOCK_OBJECT_FOR_PRINT = Lock()
 TIME_BETWEEN_PLAYS = 60 * 60 * 2
 TARGET_ID = args.like or args.play or args.follow
 TYPE_OF_ID = "MUSIC" if args.follow is None else "ARTIST"
+GATEWAY_URL = "https://coussa.anghami.com/gateway.php"
 PROXIES = {
-	"EG": "http://mrrocat:v1wwAC7RucFlArPc_country-Egypt@proxy.packetstream.io:31112",
-	"RU": "http://mrrocat:v1wwAC7RucFlArPc_country-Russia@proxy.packetstream.io:31112"
+	"EG": "http://mrrocat:v1wwAC7RucFlArPc_country-EG:proxy.packetstream.io:31112",
+	"RU": "http://mrrocat:v1wwAC7RucFlArPc_country-RU@proxy.packetstream.io:31112"
 }
 SESSIONS = {
 	"like": {},
@@ -57,29 +59,133 @@ def set_tittle(text):
 	ctypes.windll.kernel32.SetConsoleTitleW(text)
 
 def url_unpack(line):
-	return {
-		k: v for k, v in map(lambda x: x.split("="), line.split(";"))
+	parsed = {}
+	for item in line.split(";"):
+		if not item:
+			continue
+		key, separator, value = item.partition("=")
+		if separator:
+			parsed[key] = value
+	return parsed
+
+
+def build_gateway_params(**overrides):
+	params = {
+		"language": "en",
+		"lang": "en",
+		"web2": "true",
+		"web_medium": "web",
+		"userlanguageprod": "en",
 	}
+	params.update(overrides)
+	return params
+
+
+def _read_cookie_value(cookie_store, key):
+	if cookie_store is None:
+		return None
+	if hasattr(cookie_store, "get"):
+		return cookie_store.get(key)
+	if isinstance(cookie_store, dict):
+		return cookie_store.get(key)
+	return None
+
+
+def _store_fingerprint_cookies(session, fingerprint, fingerprint_id):
+	if fingerprint:
+		session.cookies.set("fingerprint", fingerprint)
+	if fingerprint_id:
+		session.cookies.set("xxlfingerprint", fingerprint_id)
+
+
+def assert_response_ok(response, context="request"):
+	if getattr(response, "ok", False):
+		return response
+	status_code = getattr(response, "status_code", None)
+	reason = getattr(response, "reason", None) or "unknown"
+	text = getattr(response, "text", "")
+	message = f"{context} failed with {status_code} {reason}"
+	if text:
+		message = f"{message}: {text[:200]}"
+	raise AssertionError(message)
+
+
+def initialize_browser_fingerprint(session, session_uuid=None, fallback_cookies=None):
+	fingerprint_id = session_uuid or uuid4()
+	hash_payload = fingerprint_id
+	encoded_hash = quote_plus(hash_payload)
+	params = build_gateway_params(
+		fp=fingerprint_id,
+		hash=encoded_hash,
+		type="POSTfingerprint",
+		fingerprint="",
+		angh_type="POSTfingerprint",
+	)
+	try:
+		response = session.get(
+			GATEWAY_URL,
+			params=params,
+			headers={
+				"Accept": "application/json, text/plain, */*",
+				"Origin": "https://www.anghami.com",
+				"Referer": "https://www.anghami.com/",
+				"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+			},
+			timeout=30,
+		)
+		response.raise_for_status()
+		payload = response.json()
+		if payload.get("status") != "ok":
+			raise RuntimeError(payload)
+		fingerprint = payload.get("fingerprint")
+		if fingerprint:
+			_store_fingerprint_cookies(session, fingerprint, fingerprint_id)
+			return fingerprint, fingerprint_id
+		return None, fingerprint_id
+	except Exception:
+		cookie_sources = []
+		if fallback_cookies is not None:
+			cookie_sources.append(fallback_cookies)
+		cookie_sources.append(session.cookies)
+		for cookie_source in cookie_sources:
+			fallback_fingerprint = _read_cookie_value(cookie_source, "fingerprint")
+			fallback_uuid = _read_cookie_value(cookie_source, "xxlfingerprint") or session_uuid
+			if fallback_fingerprint:
+				_store_fingerprint_cookies(session, fallback_fingerprint, fallback_uuid)
+				return fallback_fingerprint, fallback_uuid
+		raise
+
 
 def get_accounts(file_name="registered.txt"):
 	if not isfile(file_name):
 		print(f"{Fore.RED}Can't access {file_name} file...{Style.RESET_ALL}")
 		return []
 
+	country_filter = args.country.upper() if args.country else None
 	country_sorted = []
 	with open(file_name) as f:
 		for line in f:
 			line = line.strip()
-			if line.startswith(args.country):
-				items = line.split("~")
-				country_sorted.append(
-					[
-						*items[1:3],
-						url_unpack(items[3]),
-						url_unpack(items[4])
-					]
-				)
+			if not line:
+				continue
+			if country_filter and not line.startswith(country_filter):
+				continue
+			items = line.split("~")
+			country_sorted.append(
+				[
+					*items[1:3],
+					url_unpack(items[3]),
+					url_unpack(items[4])
+				]
+			)
 		return country_sorted
+
+
+def get_single_account(file_name="registered.txt"):
+	accounts = get_accounts(file_name=file_name)
+	if not accounts:
+		return None
+	return accounts[0]
 
 def like_song(session, song_id, session_fingerprint, session_sid):
 	payload = {
@@ -102,15 +208,18 @@ def like_song(session, song_id, session_fingerprint, session_sid):
 	}
 
 	response = session.post(
-		"https://api.anghami.com/gateway.php",
-		params=params,
+		GATEWAY_URL,
+		params=build_gateway_params(**params),
 		data=payload,
 		headers={
-			"Accept": "application/json, text/plain, */*"
+			"Accept": "application/json, text/plain, */*",
+			"Origin": "https://www.anghami.com",
+			"Referer": "https://www.anghami.com/",
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 		}
 	)
 
-	assert response.ok, response.reason
+	response = assert_response_ok(response, "like-song")
 	assert response.json().get("status") == "ok"
 
 def get_song(session, song_id, session_fingerprint, session_sid):
@@ -129,14 +238,17 @@ def get_song(session, song_id, session_fingerprint, session_sid):
 	}
 
 	response = session.get(
-		"https://api.anghami.com/gateway.php",
-		params=params,
+		GATEWAY_URL,
+		params=build_gateway_params(**params),
 		headers={
-			"Accept": "application/json, text/plain, */*"
+			"Accept": "application/json, text/plain, */*",
+			"Origin": "https://www.anghami.com",
+			"Referer": "https://www.anghami.com/",
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 		}
 	)
 
-	assert response.ok, response.reason
+	response = assert_response_ok(response, "get-song")
 	assert response.json().get("status")
 
 	return response.json()
@@ -168,14 +280,17 @@ def play_song(session, song_id, session_fingerprint, session_sid):
 	}
 
 	response = session.get(
-		"https://api.anghami.com/gateway.php",
-		params=params,
+		GATEWAY_URL,
+		params=build_gateway_params(**params),
 		headers={
-			"Accept": "application/json, text/plain, */*"
+			"Accept": "application/json, text/plain, */*",
+			"Origin": "https://www.anghami.com",
+			"Referer": "https://www.anghami.com/",
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 		}
 	)
 
-	assert response.ok, response.reason
+	response = assert_response_ok(response, "play-song")
 	assert response.json().get("status") == "ok"
 
 def follow_artist(session, artist_id, session_uuid, session_sid):
@@ -198,15 +313,18 @@ def follow_artist(session, artist_id, session_uuid, session_sid):
 	}
 
 	response = session.post(
-		"https://api.anghami.com/gateway.php",
-		params=params,
+		GATEWAY_URL,
+		params=build_gateway_params(**params),
 		data=payload,
 		headers={
-			"Accept": "application/json, text/plain, */*"
+			"Accept": "application/json, text/plain, */*",
+			"Origin": "https://www.anghami.com",
+			"Referer": "https://www.anghami.com/",
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 		}
 	)
 
-	assert response.ok, response.reason
+	response = assert_response_ok(response, "follow-artist")
 	assert response.json().get("status") == "ok"
 
 @thread
@@ -230,6 +348,11 @@ def worker(email, password, misc, cookies):
 			}
 
 		session.cookies.update(cookies)
+		fingerprint, _ = initialize_browser_fingerprint(
+			session,
+			misc.get("session_uuid"),
+			fallback_cookies=cookies,
+		)
 
 		session.headers = {
 			"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
@@ -253,15 +376,15 @@ def worker(email, password, misc, cookies):
 			session_sid = misc["appsidsave"]
 			if args.play is not None:
 				play_song(
-					session, args.play, misc["session_fingerprint"], session_sid
+					session, args.play, fingerprint, session_sid
 				)
 			elif args.like is not None:
 				like_song(
-					session, args.like, misc["session_fingerprint"], session_sid
+					session, args.like, fingerprint, session_sid
 				)
 			elif args.follow is not None:
 				follow_artist(
-					session, args.follow, misc["session_uuid"], session_sid
+					session, args.follow, fingerprint, session_sid
 				)
 			else:
 				raise Exception("Unknown method selected, can't invoke")
@@ -339,6 +462,9 @@ def main():
 	print("Starting votes...")
 
 	accounts = get_accounts()
+	preferred_account = get_single_account()
+	if preferred_account is not None:
+		accounts = [preferred_account]
 
 	while len(accounts) > 0 and VOTES_SEND < VOTES_NEED:
 		if active_count() - 2 < args.threads and \
