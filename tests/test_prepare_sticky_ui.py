@@ -142,9 +142,19 @@ def test_multiline_save_sends_only_local_prep_payload_clears_credentials_and_upd
     assert final["routes"] == "" and final["show"] is False and final["masked"] is True
     assert final["needsSave"] is False and final["prepareDisabled"] is False
     assert final["badge"] == "2 routes saved" and final["savedHidden"] is False
-    assert "2 unique sticky routes saved securely for preparation" in final["savedText"]
+    assert "2 unique EG sticky routes saved securely for preparation" in final["savedText"]
     assert final["testProxy"]["pool_size"] == 11
     assert all(all(locks.values()) for locks in result["pendingLocks"])
+
+
+def test_us_sticky_pool_save_feedback_uses_server_returned_country():
+    result = browser(connection="sticky", response={
+        "configured": True, "provider": "PacketStream", "country": "US",
+        "sticky": True, "pool_size": 1,
+    }, actions=[{"kind": "input", "value": "synthetic-us-route"}, {"kind": "save"}])
+    final = result["snapshots"][-1]
+    assert final["badge"] == "1 route saved"
+    assert "1 unique US sticky route saved securely for preparation" in final["savedText"]
 
 
 def test_input_mask_and_explicit_show_checkbox_follow_browser_support():

@@ -1,4 +1,4 @@
-"""Bounded Egypt preflight recovery uses synthetic transports and credentials."""
+"""Bounded PacketStream preflight recovery uses synthetic transports and credentials."""
 
 from collections import deque
 import json
@@ -101,6 +101,28 @@ def test_known_transient_curl_failure_retries_cookie_free_on_same_sticky_route(c
     assert_bound_closed(offline_http, config)
     assert_private_safe(proof)
     assert capsys.readouterr().out == ""
+
+
+def test_us_route_verifies_us_and_keeps_country_in_sticky_auth(offline_http):
+    config = proxy.PacketStreamProxy.from_route(
+        PRIVATE_USER, PRIVATE_KEY, "syntheticusroute", country="US",
+    )
+    offline_http["outcomes"].append(Reply(payload={"country": "US"}))
+    proof = config.verify_country()
+    assert proof["country"] == "US" and proof["country_verified"] is True
+    assert proof["proxy_used"] is True
+    assert offline_http["instances"][0].options["proxy_auth"] == (
+        PRIVATE_USER, PRIVATE_KEY + "_country-US_session-syntheticusroute",
+    )
+
+
+def test_us_route_rejects_an_exit_in_the_wrong_country_with_safe_message(offline_http):
+    config = proxy.PacketStreamProxy.from_route(
+        PRIVATE_USER, PRIVATE_KEY, "syntheticusroute", country="US",
+    )
+    offline_http["outcomes"].append(Reply(payload={"country": "EG"}))
+    with pytest.raises(proxy.ProxyCountryError, match="configured country"):
+        config.verify_country()
 
 
 @pytest.mark.parametrize("status", [502, 503, 504])
@@ -451,4 +473,3 @@ def test_existing_account_recovery_error_is_never_retried_by_country_preflight_p
     assert len(reports) == 1
     assert json.loads(reports[0].read_text())["automatic_retry"] is False
     assert_private_safe(result)
-

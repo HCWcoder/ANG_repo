@@ -321,10 +321,10 @@
       const unsaved = sticky ? preparationStickyDraft() : session && (testSessionNeedsSave || !!$('test-session-route').value.trim());
       const routeConfigured = sticky ? !!state?.sticky_pool?.configured && !unsaved : session ? !!state?.test_proxy?.configured && !unsaved : configured;
       const poolSize = Math.max(1, Number(state?.test_proxy?.pool_size) || 1);
-      $(scope.hint).textContent = sticky ? (unsaved ? 'Save the pasted links before preparing accounts, or choose Use saved routes to keep the previous pool.' : routeConfigured ? `Cycles ${formatNumber(state.sticky_pool.pool_size)} saved Egypt sticky routes, one per account. Each route and session is verified during preparation.` : 'Paste and save PacketStream Egypt sticky links below, one per line.') : session ? (unsaved ? ($('test-session-route').value.trim() ? 'Save the pasted links before running a test.' : 'Paste the links again and save them before testing.') : routeConfigured ? `Cycles ${formatNumber(poolSize)} saved sticky route${poolSize === 1 ? '' : 's'} across accounts. Safe connection retries can replace a route before a write; later tests use that replacement. Rate limits wait on the same route.` : 'Paste and save PacketStream Egypt sticky links below, one per line.') : egypt ? (configured ? 'Uses the saved PacketStream Egypt proxy.' : 'Save credentials in Proxy settings before using Egypt.') : 'Uses your current internet connection without a proxy.';
+      $(scope.hint).textContent = sticky ? (unsaved ? 'Save the pasted links before preparing accounts, or choose Use saved routes to keep the previous pool.' : routeConfigured ? `Cycles ${formatNumber(state.sticky_pool.pool_size)} saved PacketStream sticky routes, one per account. Each route and session is verified during preparation.` : 'Paste and save PacketStream Egypt or US sticky links below, one per line.') : session ? (unsaved ? ($('test-session-route').value.trim() ? 'Save the pasted links before running a test.' : 'Paste the links again and save them before testing.') : routeConfigured ? `Cycles ${formatNumber(poolSize)} saved sticky route${poolSize === 1 ? '' : 's'} across accounts. Safe connection retries can replace a route before a write; later tests use that replacement. Rate limits wait on the same route.` : 'Paste and save PacketStream Egypt or US sticky links below, one per line.') : egypt ? (configured ? 'Uses the saved PacketStream Egypt proxy.' : 'Save credentials in Proxy settings before using Egypt.') : 'Uses your current internet connection without a proxy.';
       $(scope.hint).classList.toggle('route-unavailable', egypt && !routeConfigured);
       if (name === 'tests') {
-        $('run-route').textContent = session ? 'EGYPT · STICKY POOL' : egypt ? 'EGYPT' : 'DIRECT';
+        $('run-route').textContent = session ? 'PACKETSTREAM · STICKY POOL' : egypt ? 'EGYPT' : 'DIRECT';
         $('test-session-settings').hidden = !session;
         $('test-session-badge').textContent = state?.test_proxy?.configured ? `${formatNumber(poolSize)} route${poolSize === 1 ? '' : 's'} saved` : 'No saved routes';
         $('test-session-badge').className = 'badge ' + (state?.test_proxy?.configured ? 'success' : 'neutral');
@@ -655,7 +655,7 @@
     if (!counters.request_count || !known || !Object.values(counters).every(validCounter)) return null;
     const bytes = counters.sent_bytes + counters.received_bytes;
     if (!validCounter(bytes)) return null;
-    const proxy = report.proxy && typeof report.proxy === 'object' && !Array.isArray(report.proxy) && report.proxy.provider === 'PacketStream' && report.proxy.country === 'EG' ? report.proxy : null;
+    const proxy = report.proxy && typeof report.proxy === 'object' && !Array.isArray(report.proxy) && report.proxy.provider === 'PacketStream' && ['EG', 'US'].includes(report.proxy.country) ? report.proxy : null;
     const declared = typeof report.proxy_egypt === 'boolean' ? report.proxy_egypt : null;
     const metadata = proxy ? proxy.proxy_used === false ? false : true : null;
     const route = declared !== null && metadata !== null && declared !== metadata ? null : declared ?? metadata;
@@ -1008,7 +1008,7 @@
     $('job-overview').replaceChildren(...metrics.map(([label, value]) => {
       const item = node('div', 'run-stat'); item.append(node('span', '', label), node('strong', '', value)); return item;
     }));
-    const route = job.proxy_test_session ? `Egypt sticky pool${Number.isSafeInteger(job.proxy_pool_size) ? ` · ${formatNumber(job.proxy_pool_size)} routes` : ''}` : job.proxy_egypt ? 'Egypt proxy' : 'Direct';
+    const route = job.proxy_test_session ? `PacketStream sticky pool${Number.isSafeInteger(job.proxy_pool_size) ? ` · ${formatNumber(job.proxy_pool_size)} routes` : ''}` : job.proxy_egypt ? 'Egypt proxy' : 'Direct';
     $('job-test-metrics').textContent = `${durationLabel(elapsed)} elapsed · ${route}${elapsed >= 1 && finished ? ` · ${(finished / elapsed * 60).toFixed(1)} tests/min average` : ''}${Number(job.retried) > 0 ? ` · ${formatNumber(job.retried)} tests needed a connection retry` : ''}${isActive(job) ? ' · Updates every second' : ''}`;
     $('job-active-count').textContent = `${active} active`;
     const activeTests = Array.isArray(job.active_tests) ? job.active_tests : (job.active_rows || []).map(source_row => ({source_row}));
@@ -1210,12 +1210,12 @@
   function requireProxyReady(scope) {
     if (sessionMode(scope)) {
       if (testSessionNeedsSave || $('test-session-route').value.trim()) throw new Error('Save the pasted PacketStream links before running a test.');
-      if (!state?.test_proxy?.configured) throw new Error('Paste and save PacketStream Egypt sticky links before testing.');
+      if (!state?.test_proxy?.configured) throw new Error('Paste and save PacketStream Egypt or US sticky links before testing.');
       return;
     }
     if (stickyMode(scope)) {
       if (preparationStickyDraft()) throw new Error('Save the pasted preparation links or choose Use saved routes before preparing accounts.');
-      if (!state?.sticky_pool?.configured) throw new Error('Paste and save PacketStream Egypt sticky links before preparing accounts.');
+      if (!state?.sticky_pool?.configured) throw new Error('Paste and save PacketStream Egypt or US sticky links before preparing accounts.');
       return;
     }
     if (proxyMode(scope) && !stickyMode(scope) && !state?.proxy?.configured) throw new Error('Save your PacketStream credentials in Proxy settings before using Egypt routing.');
@@ -1372,7 +1372,7 @@
     const route = $('test-session-route').value.trim();
     const lines = pastedRouteCount();
     if (!route || lines > 10000 || new TextEncoder().encode(route).length > 1024 * 1024) {
-      showError('test-session-error', 'Paste 1–10,000 PacketStream Egypt sticky links, one per line, up to 1 MiB.');
+      showError('test-session-error', 'Paste 1–10,000 PacketStream Egypt or US sticky links, one per line, up to 1 MiB.');
       return;
     }
     requestPending = true; setBusy(false); showError('test-session-error', '');
@@ -1388,7 +1388,7 @@
       await refreshState();
     } catch (_) {
       testSessionNeedsSave = true;
-      showError('test-session-error', 'The links could not be saved. Check that every nonempty line is a valid PacketStream Egypt sticky address and paste the list again.' + (state?.test_proxy?.configured ? ' Choose Use saved routes to keep the previous list.' : ''));
+      showError('test-session-error', 'The links could not be saved. Check that every nonempty line is a valid PacketStream Egypt or US sticky address and paste the list again.' + (state?.test_proxy?.configured ? ' Choose Use saved routes to keep the previous list.' : ''));
     } finally { $('test-session-route').value = ''; $('show-test-session-links').checked = false; updateRouteMask(); requestPending = false; setBusy(isActive(currentJob) || uncertainSubmission); }
   });
   $('discard-test-session').addEventListener('click', () => {
@@ -1417,7 +1417,7 @@
     if (!routes || lines > 10000 || new TextEncoder().encode(routes).length > 1024 * 1024) {
       $('prepare-sticky-routes').value = '';
       $('prepare-sticky-show-links').checked = false;
-      showError('prepare-sticky-error', 'Paste 1–10,000 PacketStream Egypt sticky links, one per line, up to 1 MiB.');
+      showError('prepare-sticky-error', 'Paste 1–10,000 PacketStream Egypt or US sticky links, one per line, up to 1 MiB.');
       updateSelections();
       return;
     }
@@ -1425,16 +1425,16 @@
     let poolSaved = false;
     try {
       const response = await api('/api/preparation-proxy', {method: 'POST', body: JSON.stringify({routes})});
-      if (response.configured !== true || !Number.isSafeInteger(response.pool_size) || response.pool_size < 1 || response.pool_size > 10000) throw new Error('The pool was not confirmed.');
-      state.sticky_pool = {configured: true, provider: 'PacketStream', country: 'EG', sticky: true, pool_size: response.pool_size};
+      if (response.configured !== true || !Number.isSafeInteger(response.pool_size) || response.pool_size < 1 || response.pool_size > 10000 || !['EG', 'US'].includes(response.country)) throw new Error('The pool was not confirmed.');
+      state.sticky_pool = {configured: true, provider: 'PacketStream', country: response.country, sticky: true, pool_size: response.pool_size};
       prepareStickyNeedsSave = false;
       $('prepare-sticky-routes').value = '';
-      $('prepare-sticky-saved').textContent = `${formatNumber(response.pool_size)} unique sticky route${response.pool_size === 1 ? '' : 's'} saved securely for preparation. Each route is checked during preparation. Test routes are saved separately.`;
+      $('prepare-sticky-saved').textContent = `${formatNumber(response.pool_size)} unique ${response.country} sticky route${response.pool_size === 1 ? '' : 's'} saved securely for preparation. Each route is checked during preparation. Test routes are saved separately.`;
       $('prepare-sticky-saved').hidden = false;
       poolSaved = true;
     } catch (_) {
       prepareStickyNeedsSave = true;
-      showError('prepare-sticky-error', 'The preparation links could not be saved. Check every nonempty line and paste the list again.' + (state?.sticky_pool?.configured ? ' Choose Use saved routes to keep the previous list.' : ''));
+      showError('prepare-sticky-error', 'The preparation links could not be saved. Check that every nonempty line is a valid PacketStream Egypt or US sticky address and paste the list again.' + (state?.sticky_pool?.configured ? ' Choose Use saved routes to keep the previous list.' : ''));
     } finally {
       $('prepare-sticky-routes').value = '';
       $('prepare-sticky-show-links').checked = false;

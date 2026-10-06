@@ -213,10 +213,11 @@ def recover_legacy_session(record, *, proxy=None):
     row, email, sid, fingerprint, cookies = _source(record)
     if proxy is not None:
         try:
-            if getattr(proxy, "country", None) != "EG":
+            expected_country = getattr(proxy, "country", None)
+            if expected_country not in {"EG", "US"}:
                 raise ValueError
             proof = proxy.verify_country()
-            if not isinstance(proof, dict) or proof.get("country") != "EG" or proof.get("country_verified") is not True or proof.get("proxy_used") is not True:
+            if not isinstance(proof, dict) or proof.get("country") != expected_country or proof.get("country_verified") is not True or proof.get("proxy_used") is not True:
                 raise ProxyCountryError("response_invalid")
         except ProxyCountryError:
             raise

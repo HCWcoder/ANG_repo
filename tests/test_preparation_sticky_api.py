@@ -33,6 +33,21 @@ def test_preparation_routes_endpoint_saves_full_list_without_touching_other_rout
     assert_safe(state)
 
 
+def test_preparation_routes_endpoint_accepts_us_sticky_link_and_reports_country(test_console, protected_store):
+    route = ROUTE.replace("_country-EG", "_country-US")
+    status, _headers, body = request(
+        test_console, "POST", "/api/preparation-proxy", body={"routes": route},
+    )
+    summary = json.loads(body)
+    assert status == 200 and summary["configured"] is True
+    assert summary["country"] == "US" and summary["pool_size"] == 1
+    saved = proxy_pool.StickyProxyPool.load(
+        test_console.folder / "packetstream-sticky-pool.dpapi",
+    )
+    assert saved.summary()["country"] == "US"
+    assert_safe(summary)
+
+
 @pytest.mark.parametrize("payload", [None, [], {}, {"routes": None}, {"routes": True},
     {"route": ROUTE}, {"routes": ROUTE, "extra": "synthetic"},
     {"routes": ""}, {"routes": ROUTE + "\ninvalid-private-line"},

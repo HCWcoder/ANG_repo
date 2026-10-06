@@ -45,6 +45,17 @@ def test_multiline_test_route_store_preserves_order_and_deduplicates_only_exact_
     assert_safe(summary)
 
 
+def test_workbench_accepts_us_sticky_routes_but_reports_country_without_secrets(tmp_path, protected_store):
+    path = tmp_path / "packetstream-test-route.dpapi"
+    route = ROUTE.replace("_country-EG", "_country-US")
+    summary = proxy_test_route.save_test_route(route, path)
+    selected = proxy_test_route.load_test_route(path)
+    assert summary["country"] == "US"
+    assert selected.country == "US"
+    assert selected.transport_options()["proxy_auth"][1].endswith("_country-US_session-" + PRIVATE_LABEL)
+    assert_safe(summary)
+
+
 @pytest.mark.parametrize("position", ["first", "middle", "last"])
 def test_one_bad_pool_line_rejects_the_entire_replacement_without_a_partial_save(tmp_path, protected_store, position):
     path = tmp_path / "packetstream-test-route.dpapi"

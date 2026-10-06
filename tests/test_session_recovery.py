@@ -104,7 +104,7 @@ class Proxy:
 
     def verify_country(self):
         self.verified += 1
-        return {"country": "EG", "country_verified": True, "proxy_used": True}
+        return {"country": self.country, "country_verified": True, "proxy_used": True}
 
     def transport_options(self):
         return {"proxy": "https://synthetic-proxy.invalid", "proxy_auth": ("synthetic-user", "private-proxy-secret")}
@@ -249,6 +249,15 @@ def test_proxy_preflight_failure_stops_without_auth_and_does_not_fallback(record
     with pytest.raises(SessionError, match="proxy country check failed"):
         recovery.recover_legacy_session(record, proxy=proxy)
     assert not calls and not instances
+
+
+def test_legacy_recovery_accepts_matching_us_route_country(record, transport):
+    proxy = Proxy()
+    proxy.country = "US"
+    saved, metadata = recovery.recover_legacy_session(record, proxy=proxy)
+    assert saved["account_email"] == "owned@example.com"
+    assert metadata["session_renewed"] is True
+    assert proxy.verified == 1
 
 
 @pytest.mark.parametrize("untrusted", [

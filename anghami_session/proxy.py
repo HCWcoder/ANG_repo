@@ -1,4 +1,4 @@
-"""Encrypted PacketStream credentials and a single verified Egypt route."""
+"""Encrypted PacketStream credentials and verified sticky routes."""
 
 from dataclasses import dataclass, field
 import json
@@ -22,6 +22,7 @@ DEFAULT_PROXY_PATH = Path(__file__).resolve().parents[1] / ".anghami" / "packets
 PACKETSTREAM_ENDPOINT = "https://proxy.packetstream.io:31111"
 GEOLOCATION_URL = "https://api.country.is/"
 _COUNTRY_SUFFIX = "_country-EG"
+SUPPORTED_ROUTE_COUNTRIES = frozenset({"EG", "US"})
 _INVALID_CREDENTIALS = "PacketStream credentials must be nonempty base values without whitespace, control characters, or routing modifiers."
 _AUTH_REJECTED = "PacketStream proxy authentication was rejected (HTTP 407). Check the configured credentials and available balance."
 COUNTRY_CHECK_MAX_ATTEMPTS = 3
@@ -53,12 +54,17 @@ def _safe_http_status(value):
 class ProxyCountryError(SessionError):
     """Fixed country-check failure with bounded, secret-free numeric evidence."""
 
-    def __init__(self, failure_kind, *, curl_code=None, http_status=None, proxy_connect_http_status=None, country_check_attempts=1, retry_after_seconds=None, retry_safe=True):
+    def __init__(self, failure_kind, *, curl_code=None, http_status=None, proxy_connect_http_status=None, country_check_attempts=1, retry_after_seconds=None, retry_safe=True, expected_country="EG"):
         if type(failure_kind) is not str or failure_kind not in COUNTRY_FAILURE_KINDS:
             raise ValueError("Use a supported proxy country-check failure kind.")
+        if type(expected_country) is not str or expected_country not in SUPPORTED_ROUTE_COUNTRIES:
+            raise ValueError("Use a supported PacketStream route country.")
         if type(country_check_attempts) is not int or not 1 <= country_check_attempts <= COUNTRY_CHECK_MAX_ATTEMPTS:
             raise ValueError("Use a bounded proxy country-check attempt count.")
-        super().__init__(_COUNTRY_FAILURE_MESSAGES[failure_kind])
+        message = _COUNTRY_FAILURE_MESSAGES[failure_kind]
+        if failure_kind == "country_unverified" and expected_country == "US":
+            message = "The proxy country check did not verify the configured country."
+        super().__init__(message)
         self.failure_kind = failure_kind
         self.curl_code = _safe_curl_code(curl_code)
         self.http_status = _safe_http_status(http_status)
@@ -101,7 +107,7 @@ def safe_proxy_country_failure(error):
         return {}
 
 
-def _country_error(kind, response, *, attempt, exception=None):
+def _country_error(kind, response, *, attempt, exception=None, expected_country="EG"):
     from .provider_recovery import observe_provider_failure, retry_after_seconds
     infos = getattr(response, "infos", {})
     failure = ProxyCountryError(
@@ -110,6 +116,7 @@ def _country_error(kind, response, *, attempt, exception=None):
         proxy_connect_http_status=infos.get(CurlInfo.HTTP_CONNECTCODE) if isinstance(infos, dict) else None,
         country_check_attempts=attempt,
         retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)),
+        expected_country=expected_country,
     )
     observe_provider_failure(failure)
     return failure
@@ -173,16 +180,19 @@ class PacketStreamProxy:
     _endpoint: str = field(default=PACKETSTREAM_ENDPOINT, init=False, repr=False)
 
     def __post_init__(self):
+        if type(self.country) is not str or self.country not in SUPPORTED_ROUTE_COUNTRIES:
+            raise SessionError("The PacketStream route country is not supported.")
         username, auth_key = _normalize_credentials(self.username, self.auth_key)
         object.__setattr__(self, "username", username)
         object.__setattr__(self, "auth_key", auth_key)
 
     @classmethod
-    def from_route(cls, username, auth_key, session_label, endpoint=PACKETSTREAM_ENDPOINT):
+    def from_route(cls, username, auth_key, session_label, endpoint=PACKETSTREAM_ENDPOINT, *, country="EG"):
         """Construct a supplied sticky route without accepting arbitrary destinations."""
         if (
             type(session_label) is not str
             or re.fullmatch(r"[A-Za-z0-9]{1,64}", session_label) is None
+            or type(country) is not str or country not in SUPPORTED_ROUTE_COUNTRIES
             or type(endpoint) is not str
             or endpoint not in {PACKETSTREAM_ENDPOINT, "http://proxy.packetstream.io:31112"}
             or any(
@@ -193,6 +203,7 @@ class PacketStreamProxy:
         ):
             raise SessionError("The PacketStream sticky route is invalid.")
         proxy = cls(username, auth_key)
+        object.__setattr__(proxy, "country", country)
         object.__setattr__(proxy, "_session_label", session_label)
         object.__setattr__(proxy, "_endpoint", endpoint)
         return proxy
@@ -200,22 +211,22 @@ class PacketStreamProxy:
     def transport_options(self) -> dict:
         return bandwidth_transport_options({
             "impersonate": "chrome", "proxy": self._endpoint,
-            "proxy_auth": (self.username, self.auth_key + _COUNTRY_SUFFIX + "_session-" + self._session_label),
+            "proxy_auth": (self.username, self.auth_key + f"_country-{self.country}_session-" + self._session_label),
             "retry": 0, "verify": True, "debug": False,
             "curl_options": {CurlOpt.NOPROXY: ""},
             "curl_infos": [CurlInfo.USED_PROXY, CurlInfo.HTTP_CONNECTCODE],
         })
 
     def browser_options(self) -> dict:
-        """Use the same Egypt route and sticky credentials in a new context."""
+        """Use the same country route and sticky credentials in a new context."""
         return {
             "server": self._endpoint,
             "username": self.username,
-            "password": self.auth_key + _COUNTRY_SUFFIX + "_session-" + self._session_label,
+            "password": self.auth_key + f"_country-{self.country}_session-" + self._session_label,
         }
 
     def summary(self) -> dict:
-        return {"provider": "PacketStream", "country": "EG", "endpoint": self._endpoint, "sticky": True}
+        return {"provider": "PacketStream", "country": self.country, "endpoint": self._endpoint, "sticky": True}
 
     def verify_country(self) -> dict:
         """Retry bounded cookie-free checks only, keeping the same sticky route."""
@@ -238,8 +249,8 @@ class PacketStreamProxy:
                         data = response.json()
                     except Exception:
                         raise _country_error("response_invalid", response, attempt=attempt) from None
-                    if not isinstance(data, dict) or data.get("country") != "EG" or data.get("error"):
-                        raise _country_error("country_unverified", response, attempt=attempt)
+                    if not isinstance(data, dict) or data.get("country") != self.country or data.get("error"):
+                        raise _country_error("country_unverified", response, attempt=attempt, expected_country=self.country)
                     return {
                         **self.summary(), "country_verified": True, "proxy_used": True,
                         "http_status": 200, "proxy_connect_http_status": 200,

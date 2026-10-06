@@ -41,7 +41,7 @@ class FakePool:
     def fingerprint(self):
         return POOL_HASH
     def summary(self):
-        return {"endpoint": "http://proxy.packetstream.io:31112"}
+        return {"country": getattr(self, "country", "EG"), "endpoint": "http://proxy.packetstream.io:31112"}
 
 
 @pytest.fixture
@@ -193,6 +193,20 @@ def test_parallel_bridge_mirrors_sticky_pool_cursor_without_credentials(offline_
     assert result["connection"] == "proxy_egypt" and result["proxy_sticky_pool"] is True
 
 
+def test_parallel_bridge_records_us_sticky_pool_country(offline_bridge):
+    fixture = offline_bridge
+    pool = FakePool()
+    pool.country = "US"
+    base = fixture.vault.path.parent
+    result = bridge.run_parallel_ui_preparation(
+        fixture.vault, options(10, proxy_egypt=True, proxy_sticky_pool=True),
+        job_id=JOB_ID, progress=fixture.published.append, pool_loader=lambda _path: pool,
+    )
+    initial, _call = fixture.run_calls[0]
+    assert initial["proxy_pool_country"] == "US"
+    assert result["connection"] == "proxy_egypt"
+
+
 @pytest.mark.parametrize("mutation", [
     lambda value: value.update(format_version=True),
     lambda value: value.update(source_job_id="unsafe/path"),
@@ -269,4 +283,3 @@ def test_resumed_seed_roundtrips_real_country_schema_with_ready_held_and_pending
     bridge.country._atomic_json(checkpoint, invalid)
     with pytest.raises(SessionError, match="progress file is invalid"):
         bridge.country.load_progress(checkpoint, plan)
-

@@ -581,8 +581,8 @@ def _public_report(value):
                 history.append(entry)
             result[key] = history
         elif key == "proxy" and isinstance(item, dict):
-            if item.get("provider") == "PacketStream" and item.get("country") == "EG":
-                result[key] = {"provider": "PacketStream", "country": "EG", "sticky": item.get("sticky") is True}
+            if item.get("provider") == "PacketStream" and item.get("country") in {"EG", "US"}:
+                result[key] = {"provider": "PacketStream", "country": item["country"], "sticky": item.get("sticky") is True}
                 for flag in ("country_verified", "proxy_used"):
                     if type(item.get(flag)) is bool:
                         result[key][flag] = item[flag]

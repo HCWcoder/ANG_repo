@@ -46,10 +46,10 @@ def label(profile):
     return profile.browser_options()["password"].rsplit("_session-", 1)[1]
 
 
-def install_pool(monkeypatch, factory, *, labels=LABELS, verifier=None):
+def install_pool(monkeypatch, factory, *, labels=LABELS, verifier=None, route_country="EG"):
     selected = []
     profiles = tuple(proxy.PacketStreamProxy.from_route(
-        PRIVATE_USER, PRIVATE_KEY, item, "http://proxy.packetstream.io:31112",
+        PRIVATE_USER, PRIVATE_KEY, item, "http://proxy.packetstream.io:31112", country=route_country,
     ) for item in labels)
     pool = proxy_pool.StickyProxyPool(profiles)
     original_select = proxy_pool.StickyProxyPool.proxy_for_index
@@ -128,6 +128,23 @@ def test_pool_assignment_is_ordered_before_eight_workers_and_wraps_without_auth_
         assert_safe(json.loads(report_path.read_text()), factory)
 
 
+def test_us_sticky_pool_is_verified_and_used_for_preparation(imported, tmp_path, monkeypatch):
+    parent, plan, _source, factory = imported
+    path = tmp_path / "progress.json"
+    pool, _selected = install_pool(monkeypatch, factory, labels=("syntheticusroute",), route_country="US")
+
+    def assert_us_route(_row, proxy):
+        assert proxy is not None and proxy.country == "US"
+
+    install_recovery(monkeypatch, factory, hook=assert_us_route)
+    result = run(parent, plan, path, workers=1, limit=1, max_consecutive_failures=20)
+    assert result["counts"]["ready"] == 1
+    assert result["proxy"]["country"] == "US"
+    progress = country.load_progress(path, plan)
+    assert progress["proxy_pool_country"] == "US"
+    assert progress["proxy_pool_fingerprint"] == pool.fingerprint()
+
+
 def test_checkpoint_resume_continues_next_pool_ordinal_without_repeating_accounts(imported, tmp_path, monkeypatch):
     parent, plan, _source, factory = imported
     path = tmp_path / "progress.json"
@@ -187,7 +204,8 @@ def bound_progress(plan, pool, *, cursor=7):
         status="paused", pause_reason="limit_reached", no_browser=True, workers=2,
         max_consecutive_failures=20, connection="proxy_egypt", proxy_pool_active=True,
         proxy_pool_count=len(pool), proxy_pool_fingerprint=pool.fingerprint(),
-        proxy_pool_endpoint=pool.summary()["endpoint"], proxy_pool_cursor=cursor,
+        proxy_pool_endpoint=pool.summary()["endpoint"], proxy_pool_country=pool.summary()["country"],
+        proxy_pool_cursor=cursor,
     )
     return progress
 
@@ -533,7 +551,8 @@ def test_near_threshold_dispatch_reserves_remaining_failure_slots_and_latches_tw
     progress.update(
         no_browser=True, workers=8, max_consecutive_failures=20, consecutive_failures=18,
         proxy_pool_active=True, proxy_pool_count=3, proxy_pool_fingerprint=pool.fingerprint(),
-        proxy_pool_cursor=18, connection="proxy_egypt",
+        proxy_pool_cursor=18, proxy_pool_endpoint=pool.summary()["endpoint"],
+        proxy_pool_country=pool.summary()["country"], connection="proxy_egypt",
     )
     for item in progress["rows"][:18]:
         item.update(state="failed", attempts=1, phase="stopped", error_code="account_failed", connection="proxy_egypt")
@@ -631,7 +650,8 @@ def test_malformed_pool_checkpoint_or_counter_is_rejected_without_rewrite(import
     pool, _selected = install_pool(monkeypatch, factory)
     progress = country._new_progress(plan)
     progress.update(no_browser=True, workers=2, max_consecutive_failures=20,
-                    proxy_pool_active=True, proxy_pool_count=3, proxy_pool_fingerprint=pool.fingerprint())
+                    proxy_pool_active=True, proxy_pool_count=3, proxy_pool_fingerprint=pool.fingerprint(),
+                    proxy_pool_endpoint=pool.summary()["endpoint"], proxy_pool_country=pool.summary()["country"])
     progress[field] = value
     path.write_text(json.dumps(progress), encoding="utf-8")
     before = path.read_bytes()
@@ -955,7 +975,8 @@ def test_recovered_ready_intent_resets_counter_only_when_no_failure_hold_is_latc
         infrastructure_failures=20 if held else 7,
         failure_hold="repeated_failures" if held else None,
         proxy_pool_active=True, proxy_pool_count=3, proxy_pool_fingerprint=pool.fingerprint(),
-        proxy_pool_cursor=1, connection="proxy_egypt",
+        proxy_pool_cursor=1, proxy_pool_endpoint=pool.summary()["endpoint"],
+        proxy_pool_country=pool.summary()["country"], connection="proxy_egypt",
     )
     progress["rows"][0].update(state="in_progress", attempts=1, phase="validation", connection="proxy_egypt")
     path.write_text(json.dumps(progress), encoding="utf-8")
@@ -976,4 +997,3 @@ def test_recovered_ready_intent_resets_counter_only_when_no_failure_hold_is_latc
         assert result["failure_hold"] is None and result["consecutive_failures"] == 0
         assert country.load_progress(path, plan)["infrastructure_failures"] == 0
         assert result["counts"]["ready"] == 2
-

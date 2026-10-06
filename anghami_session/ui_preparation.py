@@ -154,7 +154,8 @@ def run_parallel_ui_preparation(vault, options, *, job_id, progress, pool_loader
         initial.update(proxy_pool_active=True, proxy_pool_count=len(pool),
                        proxy_pool_fingerprint=pool.fingerprint(),
                        proxy_pool_cursor=cursor,
-                       proxy_pool_endpoint=pool.summary()["endpoint"], connection="proxy_egypt")
+                       proxy_pool_endpoint=pool.summary()["endpoint"],
+                       proxy_pool_country=pool.summary()["country"], connection="proxy_egypt")
     elif options.get("proxy_egypt"):
         initial["connection"] = "proxy_egypt"
     if continuation is not None:

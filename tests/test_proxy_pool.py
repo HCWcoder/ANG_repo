@@ -15,8 +15,8 @@ PRIVATE_KEY = "synthetic-pool-key"
 PRIVATE_LABELS = ("syntheticlabelone", "syntheticlabeltwo", "syntheticlabelthree")
 
 
-def route(label, *, username=PRIVATE_USER, key=PRIVATE_KEY, port=31112):
-    return f"{username}:{key}_country-EG_session-{label}:proxy.packetstream.io:{port}"
+def route(label, *, username=PRIVATE_USER, key=PRIVATE_KEY, port=31112, country="EG"):
+    return f"{username}:{key}_country-{country}_session-{label}:proxy.packetstream.io:{port}"
 
 
 def assert_safe(value):
@@ -128,6 +128,33 @@ def test_pool_fingerprint_binds_order_endpoint_and_credentials(tmp_path, protect
     changed_key = fingerprint("\n".join([route(PRIVATE_LABELS[0], key="different-synthetic-key"), *rows[1:]]), "key.dpapi")
     changed_endpoint = fingerprint("\n".join([route(PRIVATE_LABELS[0], port=31111), *rows[1:]]), "endpoint.dpapi")
     assert len({base, reordered, changed_key, changed_endpoint}) == 4
+
+
+def test_us_sticky_routes_preserve_country_through_transport_and_encrypted_pool(tmp_path, protected_store):
+    path = tmp_path / "us-pool.dpapi"
+    supplied, = proxy_pool.parse_lines(route(PRIVATE_LABELS[0], country="US"))
+    assert supplied.country == "US"
+    assert supplied.transport_options()["proxy_auth"] == (
+        PRIVATE_USER, PRIVATE_KEY + "_country-US_session-" + PRIVATE_LABELS[0],
+    )
+    assert supplied.browser_options()["password"] == PRIVATE_KEY + "_country-US_session-" + PRIVATE_LABELS[0]
+    summary = proxy_pool.save_pool([supplied], path)
+    loaded = proxy_pool.StickyProxyPool.load(path)
+    assert summary["country"] == loaded.summary()["country"] == "US"
+    assert loaded.proxy_for_index(0).transport_options() == supplied.transport_options()
+    assert json.loads(protected_store["saved"][-1][1])["country"] == "US"
+
+
+def test_sticky_pool_rejects_mixed_countries_and_preparation_accepts_us_pool(tmp_path, protected_store):
+    egypt, = proxy_pool.parse_lines(route(PRIVATE_LABELS[0]))
+    us, = proxy_pool.parse_lines(route(PRIVATE_LABELS[1], country="US"))
+    with pytest.raises(SessionError):
+        proxy_pool.StickyProxyPool((egypt, us))
+    result = proxy_pool.save_preparation_routes(
+        route(PRIVATE_LABELS[0], country="US"), tmp_path / "preparation.dpapi",
+    )
+    assert result["country"] == "US"
+    assert json.loads(protected_store["saved"][-1][1])["country"] == "US"
 
 
 @pytest.mark.parametrize("value", [None, False, True, -1, 1.0, "1", [], {}])
@@ -283,4 +310,3 @@ def test_supplied_base_credentials_cannot_hide_a_duplicate_country_modifier(modi
     with pytest.raises(SessionError) as parsed:
         proxy_pool.parse_lines(route(PRIVATE_LABELS[0], key=supplied_key))
     assert_safe(parsed.value)
-

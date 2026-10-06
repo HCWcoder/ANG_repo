@@ -1,4 +1,4 @@
-"""Ordered, user-bound encrypted PacketStream sticky-session pool.
+"""Ordered, user-bound encrypted PacketStream sticky-session pools.
 
 The pool contains routes, not proof of live exit IPs. Each account must verify
 its selected route and its own authenticated session before becoming ready.
@@ -12,18 +12,18 @@ from pathlib import Path
 import re
 
 from .errors import SessionError
-from .proxy import PacketStreamProxy
+from .proxy import PacketStreamProxy, SUPPORTED_ROUTE_COUNTRIES
 from . import store
 
 DEFAULT_STICKY_POOL_PATH = Path(__file__).resolve().parents[1] / ".anghami" / "packetstream-sticky-pool.dpapi"
-_INVALID = "The sticky proxy pool is invalid. Use PacketStream Egypt sticky routes on HTTP port 31112 or HTTPS port 31111."
+_INVALID = "The sticky proxy pool is invalid. Use PacketStream Egypt or US sticky routes on HTTP port 31112 or HTTPS port 31111."
 _MAX_ENTRIES = 100_000
 _MAX_INPUT_BYTES = 16 * 1024 * 1024
 PREPARATION_MAX_ROUTES = 10_000
 PREPARATION_MAX_INPUT_BYTES = 1024 * 1024
 _LINE = re.compile(
     r"(?:(?P<scheme>https?)://)?(?P<username>[^:\s@/]+):"
-    r"(?P<auth_key>[^:\s@/]+)_country-EG_session-(?P<label>[A-Za-z0-9]{1,64})"
+    r"(?P<auth_key>[^:\s@/]+)_country-(?P<country>EG|US)_session-(?P<label>[A-Za-z0-9]{1,64})"
     r"(?P<separator>[:@])proxy\.packetstream\.io:(?P<port>31111|31112)\Z"
 )
 
@@ -32,7 +32,9 @@ def _entry(proxy):
     if not isinstance(proxy, PacketStreamProxy):
         raise SessionError(_INVALID)
     # Revalidate every boundary instead of trusting a dataclass made elsewhere.
-    checked = PacketStreamProxy.from_route(proxy.username, proxy.auth_key, proxy._session_label, proxy._endpoint)
+    checked = PacketStreamProxy.from_route(
+        proxy.username, proxy.auth_key, proxy._session_label, proxy._endpoint, country=proxy.country,
+    )
     return {
         "username": checked.username, "auth_key": checked.auth_key,
         "session_label": checked._session_label, "endpoint": checked._endpoint,
@@ -42,6 +44,10 @@ def _entry(proxy):
 def _payload(proxies):
     if not isinstance(proxies, (list, tuple)) or not 1 <= len(proxies) <= _MAX_ENTRIES:
         raise SessionError(_INVALID)
+    countries = {proxy.country for proxy in proxies if isinstance(proxy, PacketStreamProxy)}
+    if len(countries) != 1:
+        raise SessionError(_INVALID)
+    country, = countries
     entries, seen = [], set()
     for proxy in proxies:
         entry = _entry(proxy)
@@ -49,7 +55,7 @@ def _payload(proxies):
         if key not in seen:
             seen.add(key)
             entries.append(entry)
-    return {"format_version": 1, "provider": "PacketStream", "country": "EG", "entries": entries}
+    return {"format_version": 1, "provider": "PacketStream", "country": country, "entries": entries}
 
 
 def _canonical(payload):
@@ -75,13 +81,13 @@ def parse_lines(text):
                 raise ValueError
             proxies.append(PacketStreamProxy.from_route(
                 match["username"], match["auth_key"], match["label"],
-                f"{scheme}://proxy.packetstream.io:{port}",
+                f"{scheme}://proxy.packetstream.io:{port}", country=match["country"],
             ))
             if len(proxies) > _MAX_ENTRIES:
                 raise ValueError
         payload = _payload(proxies)
         return [PacketStreamProxy.from_route(
-            entry["username"], entry["auth_key"], entry["session_label"], entry["endpoint"],
+            entry["username"], entry["auth_key"], entry["session_label"], entry["endpoint"], country=payload["country"],
         ) for entry in payload["entries"]]
     except Exception:
         raise SessionError(_INVALID) from None
@@ -96,6 +102,7 @@ class StickyProxyPool:
             payload = _payload(self._proxies)
             checked = tuple(PacketStreamProxy.from_route(
                 entry["username"], entry["auth_key"], entry["session_label"], entry["endpoint"],
+                country=payload["country"],
             ) for entry in payload["entries"])
             object.__setattr__(self, "_proxies", checked)
         except Exception:
@@ -115,7 +122,7 @@ class StickyProxyPool:
     def summary(self):
         endpoints = sorted({proxy._endpoint for proxy in self._proxies})
         return {
-            "provider": "PacketStream", "country": "EG", "sticky": True,
+            "provider": "PacketStream", "country": self._proxies[0].country, "sticky": True,
             "pool_size": len(self), "endpoint": endpoints[0] if len(endpoints) == 1 else "mixed",
         }
 
@@ -130,7 +137,7 @@ class StickyProxyPool:
                 type(payload) is not dict
                 or set(payload) != {"format_version", "provider", "country", "entries"}
                 or type(payload["format_version"]) is not int or payload["format_version"] != 1
-                or payload["provider"] != "PacketStream" or payload["country"] != "EG"
+                or payload["provider"] != "PacketStream" or payload["country"] not in SUPPORTED_ROUTE_COUNTRIES
                 or type(payload["entries"]) is not list
                 or not 1 <= len(payload["entries"]) <= _MAX_ENTRIES
             ):
@@ -141,6 +148,7 @@ class StickyProxyPool:
                     raise ValueError
                 proxies.append(PacketStreamProxy.from_route(
                     entry["username"], entry["auth_key"], entry["session_label"], entry["endpoint"],
+                    country=payload["country"],
                 ))
             pool = cls(tuple(proxies))
             if len(pool) != len(proxies):

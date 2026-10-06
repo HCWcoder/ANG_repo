@@ -783,6 +783,16 @@ def test_public_http_preparation_report_keeps_only_known_method_facts():
     assert ui_jobs._public_report({"preparation_method": PASSWORD, "browser": PASSWORD}) == {}
 
 
+def test_public_report_retains_supported_packetstream_country_without_credentials():
+    assert ui_jobs._public_report({"proxy": {
+        "provider": "PacketStream", "country": "US", "sticky": True,
+        "country_verified": True, "proxy_used": True, "auth_key": PROXY_SECRET,
+    }}) == {"proxy": {
+        "provider": "PacketStream", "country": "US", "sticky": True,
+        "country_verified": True, "proxy_used": True,
+    }}
+
+
 def test_failure_readback_uses_only_changed_redacted_report(tmp_path):
     manager, factories, _proxy, _loads = make_manager(tmp_path)
     path = tmp_path / "account-7.test-play-record-report.json"

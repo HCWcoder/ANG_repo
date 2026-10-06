@@ -9,7 +9,7 @@ from .proxy_pool import StickyProxyPool, parse_lines, save_pool
 DEFAULT_TEST_ROUTE_PATH = Path(__file__).resolve().parents[1] / ".anghami" / "packetstream-test-route.dpapi"
 MAX_TEST_ROUTE_BYTES = 1024 * 1024
 MAX_TEST_ROUTES = 10_000
-_INVALID = "Enter 1-10000 PacketStream Egypt sticky routes, one per line, within 1 MiB, on HTTP port 31112 or HTTPS port 31111."
+_INVALID = "Enter 1-10000 PacketStream Egypt or US sticky routes, one per line, within 1 MiB, on HTTP port 31112 or HTTPS port 31111."
 
 
 def save_test_route(route, path=DEFAULT_TEST_ROUTE_PATH):

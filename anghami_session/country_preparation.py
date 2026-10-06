@@ -379,7 +379,7 @@ def _new_progress(plan):
         "max_consecutive_failures": 3,
         "proxy_pool_active": False, "proxy_pool_count": 0,
         "proxy_pool_fingerprint": None, "proxy_pool_cursor": 0,
-        "proxy_pool_endpoint": None, "ui_read_failure": None,
+        "proxy_pool_endpoint": None, "proxy_pool_country": None, "ui_read_failure": None,
         "tagged_rows": plan["tagged_rows"], "duplicate_rows": plan["duplicate_rows"],
         "unknown_acknowledged": False, "infrastructure_failures": 0, "consecutive_failures": 0,
         "reduce_browser_data": True,
@@ -573,6 +573,7 @@ def load_progress(path, plan):
         pool_fingerprint = value.get("proxy_pool_fingerprint")
         pool_active = value.get("proxy_pool_active", False)
         pool_endpoint = value.get("proxy_pool_endpoint")
+        pool_country = value.get("proxy_pool_country", "EG" if pool_count else None)
         if (
             type(pool_active) is not bool or type(pool_count) is not int or not 0 <= pool_count <= 100_000
             or type(pool_cursor) is not int or not 0 <= pool_cursor <= (2 ** 63 - 1)
@@ -580,7 +581,10 @@ def load_progress(path, plan):
             or (pool_count > 0 and (type(pool_fingerprint) is not str or re.fullmatch(r"[0-9a-f]{64}", pool_fingerprint) is None))
             or (pool_active and (value.get("no_browser", False) is not True or value.get("connection") != "proxy_egypt"))
             or pool_endpoint not in {None, "http://proxy.packetstream.io:31112", "https://proxy.packetstream.io:31111", "mixed"}
+            or pool_country not in {None, "EG", "US"}
+            or (pool_count > 0 and pool_country is None)
             or (pool_count == 0 and pool_endpoint is not None)
+            or (pool_count == 0 and pool_country is not None)
         ):
             raise ValueError
         for row in rows:
@@ -596,6 +600,7 @@ def load_progress(path, plan):
             ):
                 raise ValueError
         result = {name: value.get(name, template[name]) for name in template if name != "rows"}
+        result["proxy_pool_country"] = pool_country
         result.update(requested_workers=requested, effective_workers=effective)
         result["failure_hold"] = _failure_hold(value)
         ui_read_failure = value.get("ui_read_failure")
@@ -716,7 +721,10 @@ def summarize(progress):
         } for row in progress["rows"] if row["state"] in {"failed", "unknown"}][-5:],
     }
     if summary["connection"] == "proxy_egypt":
-        summary["proxy"] = {"provider": "PacketStream", "country": "EG", "endpoint": PACKETSTREAM_ENDPOINT, "sticky": True}
+        summary["proxy"] = {
+            "provider": "PacketStream", "country": progress.get("proxy_pool_country") or "EG",
+            "endpoint": PACKETSTREAM_ENDPOINT, "sticky": True,
+        }
     if progress.get("proxy_pool_active", False):
         summary["proxy"]["endpoint"] = progress.get("proxy_pool_endpoint") or "pool"
         summary["proxy_pool"] = {
@@ -1199,12 +1207,14 @@ def _http_worker_once(vault_path, plan, row, *, prepare, proxy_egypt, report_pat
                 if proxy is None:
                     proxy = load_packetstream_proxy(worker_vault.path.parent / "packetstream.dpapi")
                 proxy_stage = "profile_country"
-                if type(getattr(proxy, "country", None)) is not str or proxy.country != "EG":
-                    raise SessionError("The saved proxy route must select Egypt.")
+                expected_country = getattr(selected_proxy, "country", "EG")
+                if type(expected_country) is not str or expected_country not in {"EG", "US"} or proxy.country != expected_country:
+                    message = "The selected sticky proxy route country is invalid." if selected_proxy is not None else "The saved proxy route must select Egypt."
+                    raise SessionError(message)
                 proxy_stage = "country_check"
                 verification = proxy.verify_country()
                 if (
-                    not isinstance(verification, dict) or verification.get("country") != "EG"
+                    not isinstance(verification, dict) or verification.get("country") != expected_country
                     or verification.get("country_verified") is not True or verification.get("proxy_used") is not True
                 ):
                     raise SessionError("The selected proxy route was not verified.")
@@ -1490,7 +1500,7 @@ def _run_parallel_http(vault, plan, progress, *, checkpoint, pause, prepare, lim
                     pool_index = progress["proxy_pool_cursor"]
                     if sticky_pool is not None:
                         selected_proxy = sticky_pool.proxy_for_index(progress["proxy_pool_cursor"])
-                        if selected_proxy is None or getattr(selected_proxy, "country", None) != "EG":
+                        if selected_proxy is None or getattr(selected_proxy, "country", None) != sticky_pool.summary()["country"]:
                             raise SessionError("The selected sticky proxy pool route is invalid.")
                         progress["proxy_pool_cursor"] += 1
                     item.update(state="in_progress", attempts=1, phase="preparing", error_code=None, login_failure=None, connection=progress["connection"])
@@ -1635,6 +1645,7 @@ def run_plan(vault, plan, progress_path, *, limit=None, prepare=None, ui_path=No
         if sticky_pool is not None:
             pool_count, fingerprint = len(sticky_pool), sticky_pool.fingerprint()
             endpoint = sticky_pool.summary().get("endpoint")
+            pool_country = sticky_pool.summary().get("country")
             if (
                 type(pool_count) is not int or not 1 <= pool_count <= 100_000
                 or type(fingerprint) is not str or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
@@ -1651,7 +1662,8 @@ def run_plan(vault, plan, progress_path, *, limit=None, prepare=None, ui_path=No
                 # The explicit replacement changes only the validated route binding.
                 # Preserve every row and hold, including a pause that prevents work.
                 progress.update(proxy_pool_count=pool_count, proxy_pool_fingerprint=fingerprint,
-                                proxy_pool_cursor=0, proxy_pool_endpoint=endpoint, updated_at_utc=_now())
+                                proxy_pool_cursor=0, proxy_pool_endpoint=endpoint,
+                                proxy_pool_country=pool_country, updated_at_utc=_now())
                 _atomic_json(progress_path, progress)
         if _migrate_provider_rows(progress):
             progress["updated_at_utc"] = _now()
@@ -1676,7 +1688,7 @@ def run_plan(vault, plan, progress_path, *, limit=None, prepare=None, ui_path=No
             replacement["consecutive_failures"] = progress["consecutive_failures"]
             replacement["failure_hold"] = hold
             replacement["proxy_failure"] = progress["proxy_failure"]
-            for name in ("max_consecutive_failures", "proxy_pool_active", "proxy_pool_count", "proxy_pool_fingerprint", "proxy_pool_cursor", "proxy_pool_endpoint"):
+            for name in ("max_consecutive_failures", "proxy_pool_active", "proxy_pool_count", "proxy_pool_fingerprint", "proxy_pool_cursor", "proxy_pool_endpoint", "proxy_pool_country"):
                 replacement[name] = progress[name]
             if progress_path.exists():
                 _atomic_json(progress_path.with_name(progress_path.stem + ".previous-" + progress["run_id"] + ".json"), progress)
@@ -1696,6 +1708,7 @@ def run_plan(vault, plan, progress_path, *, limit=None, prepare=None, ui_path=No
         if sticky_pool is not None:
             progress["proxy_pool_count"], progress["proxy_pool_fingerprint"] = pool_count, fingerprint
             progress["proxy_pool_endpoint"] = endpoint
+            progress["proxy_pool_country"] = pool_country
         progress["connection"] = "proxy_egypt" if proxy_egypt else "direct"
         if not proxy_egypt:
             progress["proxy_failure"] = None
@@ -1806,12 +1819,13 @@ def run_plan(vault, plan, progress_path, *, limit=None, prepare=None, ui_path=No
                 try:
                     proxy = load_packetstream_proxy(vault.path.parent / "packetstream.dpapi")
                     proxy_stage = "profile_country"
-                    if type(getattr(proxy, "country", None)) is not str or proxy.country != "EG":
+                    expected_country = getattr(proxy, "country", None)
+                    if type(expected_country) is not str or expected_country != "EG":
                         raise SessionError("The saved proxy route must select Egypt.")
                     proxy_stage = "country_check"
                     verification = proxy.verify_country()
                     if (
-                        not isinstance(verification, dict) or verification.get("country") != "EG"
+                        not isinstance(verification, dict) or verification.get("country") != expected_country
                         or verification.get("country_verified") is not True or verification.get("proxy_used") is not True
                     ):
                         raise SessionError("The selected proxy route was not verified.")
@@ -2064,6 +2078,7 @@ def main(argv=None):
                                 raise SessionError("The selected sticky proxy pool does not match the saved preparation checkpoint.")
                             progress["proxy_pool_count"], progress["proxy_pool_fingerprint"] = len(sticky_pool), sticky_pool.fingerprint()
                             progress["proxy_pool_endpoint"] = sticky_pool.summary().get("endpoint")
+                            progress["proxy_pool_country"] = sticky_pool.summary().get("country")
                     result = summarize(progress)
                     result["dry_run"] = not args.status
         print(json.dumps(result, indent=2), flush=True)
