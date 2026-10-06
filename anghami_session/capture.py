@@ -7,8 +7,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from .browser import launch_browser
 from .client import GATEWAY_URL, IGNORED_HEADERS, OPERATIONS
-from .errors import LOGIN_AUTHENTICATION_RESULTS, LoginCaptureError, SessionError
-from .proxy import GEOLOCATION_URL
+from .errors import LOGIN_AUTHENTICATION_RESULTS, LoginCaptureError, RequestFailure, SessionError
+from .proxy import GEOLOCATION_URL, ProxyCountryError, wait_country_lookup_start
+from .provider_recovery import observe_provider_failure, retry_after_seconds
 
 
 def _verify_browser_country(context) -> None:
@@ -16,16 +17,23 @@ def _verify_browser_country(context) -> None:
     page = None
     try:
         page = context.new_page()
+        if not wait_country_lookup_start():
+            raise ProxyCountryError("http_failure", http_status=429, retry_after_seconds=121, retry_safe=False)
         response = page.goto(GEOLOCATION_URL, wait_until="domcontentloaded", timeout=25000)
-        if response is None or type(response.status) is not int or response.status != 200:
-            raise ValueError
+        if response is None or type(response.status) is not int:
+            raise ProxyCountryError("transport_error")
+        if response.status != 200:
+            failure = ProxyCountryError("authentication_rejected" if response.status == 407 else "http_failure", http_status=response.status,
+                                        retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)))
+            observe_provider_failure(failure)
+            raise failure
         data = response.json()
         if not isinstance(data, dict) or data.get("country") != "EG" or data.get("error"):
-            raise ValueError
+            raise ProxyCountryError("country_unverified")
+    except ProxyCountryError:
+        raise
     except Exception:
-        raise SessionError(
-            "The browser proxy country check did not verify Egypt. No Anghami sign-in was attempted."
-        ) from None
+        raise ProxyCountryError("transport_error") from None
     finally:
         if page is not None:
             try:
@@ -57,6 +65,8 @@ def capture_login(*, email: str | None = None, password: str | None = None,
         try:
             proxy.verify_country()
             browser_proxy_options = proxy.browser_options()
+        except ProxyCountryError:
+            raise
         except Exception:
             raise SessionError("The login proxy country check failed. No browser was opened.") from None
     if email is None:
@@ -74,6 +84,19 @@ def capture_login(*, email: str | None = None, password: str | None = None,
     page_http_status = None
     auth_http_status = None
     authentication_result = None
+    auth_retry_after = None
+    page_retry_after = None
+    submitted = False
+
+    def provider_error():
+        status = next((value for value in (auth_http_status, page_http_status)
+                       if value == 429 or type(value) is int and 500 <= value <= 599), None)
+        if status is None:
+            return None
+        return RequestFailure("request_rate_limited" if status == 429 else "request_http_failed",
+                              stage="preflight", http_status=status,
+                              retry_after_seconds=auth_retry_after if status == auth_http_status else page_retry_after,
+                              retry_safe=not submitted)
     try:
         browser = launch_browser(headless=headless, backend=browser_backend)
         stage = "context"
@@ -89,7 +112,7 @@ def capture_login(*, email: str | None = None, password: str | None = None,
             _verify_browser_country(context)
 
         def record(response):
-            nonlocal auth_http_status, authentication_result
+            nonlocal auth_http_status, authentication_result, auth_retry_after
             request = response.request
             parts = urlsplit(request.url)
             if f"{parts.scheme}://{parts.netloc}{parts.path}" != GATEWAY_URL:
@@ -99,6 +122,10 @@ def capture_login(*, email: str | None = None, password: str | None = None,
             if operation == "authenticate":
                 observed_status = response.status
                 auth_http_status = observed_status if type(observed_status) is int and 100 <= observed_status <= 599 else None
+                auth_retry_after = retry_after_seconds(getattr(response, "headers", None))
+                provider = provider_error()
+                if provider is not None:
+                    observe_provider_failure(provider)
                 authentication_result = None
                 try:
                     auth_body = response.json()
@@ -141,6 +168,11 @@ def capture_login(*, email: str | None = None, password: str | None = None,
         observed_status = getattr(page_response, "status", None)
         if type(observed_status) is int and 100 <= observed_status <= 599:
             page_http_status = observed_status
+            page_retry_after = retry_after_seconds(getattr(page_response, "headers", None))
+        error = provider_error()
+        if error is not None:
+            observe_provider_failure(error)
+            raise error
         stage = "setup"
         optional = page.get_by_role("button", name="Reject Optional", exact=True)
         try:
@@ -156,6 +188,7 @@ def capture_login(*, email: str | None = None, password: str | None = None,
         stage = "password"
         page.get_by_placeholder("Enter your password", exact=True).fill(password)
         stage = "submit"
+        submitted = True
         page.get_by_role("button", name="Login", exact=True).click()
         password = None
         stage = "home"
@@ -163,6 +196,9 @@ def capture_login(*, email: str | None = None, password: str | None = None,
         if reduce_browser_data:
             home_options["wait_until"] = "domcontentloaded"
         page.wait_for_url("**/home", **home_options)
+        error = provider_error()
+        if error is not None:
+            raise error
         stage = "session_capture"
         for _ in range(30):
             if all(name in captured for name in OPERATIONS):
@@ -178,10 +214,21 @@ def capture_login(*, email: str | None = None, password: str | None = None,
             "requests": captured,
         }, login_metadata
     except BrowserTimeout:
-        code = "login_rejected" if stage == "home" and authentication_result in {"failed", "fail", "error"} else "login_timeout"
+        error = provider_error()
+        if error is not None:
+            raise error from None
+        code = "login_rejected" if stage == "home" and auth_http_status == 200 and authentication_result in {"failed", "fail", "error"} else "login_timeout"
         raise LoginCaptureError(code, stage=stage, page_http_status=page_http_status, auth_http_status=auth_http_status, authentication_result=authentication_result) from None
     except BrowserError:
+        error = provider_error()
+        if error is not None:
+            raise error from None
         raise LoginCaptureError("browser_error", stage=stage, page_http_status=page_http_status, auth_http_status=auth_http_status, authentication_result=authentication_result) from None
+    except LoginCaptureError:
+        error = provider_error()
+        if error is not None:
+            raise error from None
+        raise
     finally:
         password = None
         if browser is not None:

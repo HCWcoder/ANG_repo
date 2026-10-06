@@ -5,8 +5,11 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from curl_cffi import CurlInfo, requests
+from curl_cffi.curl import CurlError
 
-from .errors import SessionError
+from .bandwidth import bandwidth_transport_options, measured_request
+from .errors import RequestFailure, SessionError
+from .provider_recovery import observe_provider_failure, retry_after_seconds, wait_before_provider_request
 from .store import DEFAULT_SESSION_PATH, load_session
 
 GATEWAY_URL = "https://coussa.anghami.com/gateway.php"
@@ -95,7 +98,7 @@ class AnghamiSession:
 
     def _new_transport(self):
         options = {"impersonate": "chrome"} if self._proxy is None else self._proxy.transport_options()
-        return requests.Session(**options)
+        return requests.Session(**bandwidth_transport_options(options))
 
     @property
     def proxy_summary(self):
@@ -116,7 +119,7 @@ class AnghamiSession:
                 or type(infos.get(CurlInfo.USED_PROXY)) is not int or infos[CurlInfo.USED_PROXY] != 1
                 or type(infos.get(CurlInfo.HTTP_CONNECTCODE)) is not int or infos[CurlInfo.HTTP_CONNECTCODE] not in {0, 200}
             ):
-                raise SessionError("The configured proxy route was not confirmed. No direct fallback is permitted.")
+                raise RequestFailure("request_proxy_unverified", stage="preflight", retry_safe=False)
 
     def __enter__(self):
         return self
@@ -135,23 +138,29 @@ class AnghamiSession:
 
     def request(self, operation: str = "relations") -> dict:
         template = self._template(operation)
+        if not wait_before_provider_request(operation):
+            raise RequestFailure("request_rate_limited", stage=operation, http_status=429, retry_after_seconds=121, retry_safe=False)
         try:
-            response = self._http.get(
+            response = measured_request(self._http, "get",
                 template["url"], headers=template["headers"],
                 timeout=25, allow_redirects=False,
             )
         except Exception as exc:
             # Transport exceptions may contain a URL with session secrets.
-            raise SessionError(f"Anghami request failed ({type(exc).__name__}).") from None
+            raise RequestFailure("request_transport_failed" if isinstance(exc, (CurlError, OSError)) else "session_response_invalid", stage=operation, curl_code=getattr(exc, "code", None)) from None
         self._require_proxy_route(response)
         if response.status_code != 200:
-            raise SessionError(f"Anghami returned HTTP {response.status_code}. Refresh or check the saved session.")
+            failure = RequestFailure("request_rate_limited" if response.status_code == 429 else "request_http_failed",
+                                 stage=operation, http_status=response.status_code,
+                                 retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)))
+            observe_provider_failure(failure)
+            raise failure
         try:
             data = response.json()
         except ValueError:
-            raise SessionError("Anghami returned an unexpected response format.") from None
+            raise RequestFailure("session_response_invalid", stage=operation) from None
         if not isinstance(data, dict) or data.get("status") != "ok":
-            raise SessionError("The saved session was not accepted. Run python -m anghami_session login.")
+            raise RequestFailure("session_authentication_rejected" if isinstance(data, dict) and data.get("status") == "failed" else "session_response_invalid", stage=operation)
         return data
 
     def song(self, song_id: str | int) -> dict:
@@ -160,24 +169,30 @@ class AnghamiSession:
         if not song_id.isascii() or not song_id.isdecimal() or not 1 <= len(song_id) <= 20:
             raise SessionError("Song ID must contain one to twenty decimal digits.")
         template = self._template("relations")
+        if not wait_before_provider_request("song_metadata"):
+            raise RequestFailure("request_rate_limited", stage="song_metadata", http_status=429, retry_after_seconds=121, retry_safe=False)
         parts = urlsplit(template["url"])
         common = {"output", "sid", "appsid", "fingerprint", "web2", "language", "lang", "userlanguageprod"}
         query = [(k, v) for k, v in parse_qsl(parts.query) if k in common]
         query.extend((("type", "GETsong"), ("angh_type", "GETsong"), ("songId", song_id)))
         try:
-            response = self._http.get(
+            response = measured_request(self._http, "get",
                 urlunsplit(parts._replace(query=urlencode(query))),
                 headers=template["headers"], timeout=25, allow_redirects=False,
             )
         except Exception as exc:
-            raise SessionError(f"Song request failed ({type(exc).__name__}).") from None
+            raise RequestFailure("request_transport_failed" if isinstance(exc, (CurlError, OSError)) else "session_response_invalid", stage="song_metadata", curl_code=getattr(exc, "code", None)) from None
         self._require_proxy_route(response)
         if response.status_code != 200:
-            raise SessionError(f"Song request returned HTTP {response.status_code}.")
+            failure = RequestFailure("request_rate_limited" if response.status_code == 429 else "request_http_failed",
+                                 stage="song_metadata", http_status=response.status_code,
+                                 retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)))
+            observe_provider_failure(failure)
+            raise failure
         try:
             data = response.json()
         except ValueError:
-            raise SessionError("Song request returned an unexpected response format.") from None
+            raise RequestFailure("session_response_invalid", stage="song_metadata") from None
         if (
             not isinstance(data, dict) or isinstance(data.get("status"), bool)
             or data.get("status") not in (1, "1", "ok") or str(data.get("id")) != song_id
@@ -205,6 +220,8 @@ class AnghamiSession:
         if self.proxy_summary is not None:
             report["proxy"] = self.proxy_summary
         if negative_control:
+            if not wait_before_provider_request("negative_control"):
+                raise RequestFailure("request_rate_limited", stage="negative_control", http_status=429, retry_after_seconds=121, retry_safe=False)
             template = self._template("relations")
             parts = urlsplit(template["url"])
             query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() not in {"sid", "appsid"}]
@@ -213,14 +230,22 @@ class AnghamiSession:
             try:
                 # A fresh transport cannot inherit cookies from the positive check.
                 with self._new_transport() as anonymous:
-                    response = anonymous.get(url, headers=headers, timeout=25, allow_redirects=False)
+                    response = measured_request(anonymous, "get", url, headers=headers, timeout=25, allow_redirects=False)
                     self._require_proxy_route(response)
+                    if response.status_code != 200:
+                        failure = RequestFailure("request_rate_limited" if response.status_code == 429 else "request_http_failed",
+                                             stage="negative_control", http_status=response.status_code,
+                                             retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)))
+                        observe_provider_failure(failure)
+                        raise failure
                     control = response.json()
             except Exception as exc:
-                raise SessionError(f"Unauthenticated control failed ({type(exc).__name__}).") from None
+                if isinstance(exc, RequestFailure):
+                    raise
+                raise RequestFailure("request_transport_failed" if isinstance(exc, (CurlError, OSError)) else "session_response_invalid", stage="negative_control", curl_code=getattr(exc, "code", None)) from None
             rejected = response.status_code == 200 and isinstance(control, dict) and control.get("status") == "failed"
             if not rejected:
-                raise SessionError("The unauthenticated control did not reject authentication as expected.")
+                raise RequestFailure("session_control_failed", stage="negative_control")
             report["without_session"] = {
                 "http_status": response.status_code,
                 "api_status": "failed",

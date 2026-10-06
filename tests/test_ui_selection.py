@@ -186,12 +186,17 @@ let submitted = null;
 let failure = null;
 const context = vm.createContext({
   $: id => elements[id], limits: () => ({accounts: 5}),
+  state: {preparation_availability: {available: true, counts: {EG: 20, LB: 10, all: 30}, start_row: 1}},
+  preparationAvailabilityLookup: null,
   integer: value => Number(value), requireProxyReady: () => {},
   proxyMode: () => input.proxy,
+  heldSessionRows: () => new Set(),
+  stickyMode: () => !!input.sticky,
   submitJob: async payload => {submitted = payload;},
   showError: (_id, message) => {failure = message;},
 });
 vm.runInContext(section('  function noBrowserPreparation', '  function updatePreparationMethod'), context);
+vm.runInContext(section('  function preparationStartRow', '  async function refreshPreparationAvailability'), context);
 vm.runInContext(section('  async function startPreparation', '  async function loadReport'), context);
 (async () => {
   await vm.runInContext(input.action === 'login' ? 'startLogin()' : `startPreparation('${input.action}')`, context);
@@ -220,6 +225,24 @@ def test_browser_data_payload_uses_own_toggle_independent_of_connection(action, 
     assert result["submitted"]["headless"] is True
     if action != "login":
         assert result["submitted"]["no_browser"] is False
+
+
+@pytest.mark.parametrize("action", ["prepare", "preview"])
+def test_sticky_selection_is_explicit_in_http_preparation_payload(action):
+    require_node()
+    completed = subprocess.run(
+        [NODE, "-e", HANDLER_DRIVER, str(APP)],
+        input=json.dumps({"action": action, "proxy": True, "sticky": True, "no_browser": True}),
+        capture_output=True, text=True, timeout=5, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["failure"] is None
+    assert result["submitted"]["proxy_sticky_pool"] is True
+    assert result["submitted"]["proxy_egypt"] is True
+    assert result["submitted"]["no_browser"] is True
+    assert result["submitted"]["reduce_browser_data"] is False
+    assert result["submitted"]["headless"] is False
 
 
 def test_browser_data_controls_follow_busy_lock_and_do_not_change_test_payloads():

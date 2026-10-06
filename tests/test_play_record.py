@@ -12,7 +12,74 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from anghami_session import accounts, media_gateway, play_record, vault as vault_module
-from anghami_session.errors import SessionError
+from anghami_session.errors import RequestFailure, SessionError, safe_request_failure
+
+
+@pytest.mark.parametrize("code", ["request_transport_failed", "request_rate_limited", "session_authentication_rejected"])
+def test_typed_preflight_failure_is_preserved_without_renewal_or_event(saved_session, bootstrap, tmp_path, code):
+    failure = RequestFailure(code, stage="relations", http_status=429 if code == "request_rate_limited" else None)
+    saved_session.check = lambda **options: (_ for _ in ()).throw(failure)
+    path = tmp_path / "synthetic-play-failure.json"
+    with pytest.raises(RequestFailure) as caught:
+        play_record.run_play_record_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    assert caught.value is failure
+    report = json.loads(path.read_text())
+    assert report["session_failure"] == safe_request_failure(failure)
+    assert report["renewal_attempted"] is False and report["event_attempted"] is False
+    assert saved_session._http.calls == [] and bootstrap == []
+
+
+def test_renewal_intent_is_durable_before_media_bootstrap(saved_session, tmp_path, monkeypatch):
+    path = tmp_path / "synthetic-renewal-failure.json"
+    def bootstrap(gateway):
+        report = json.loads(path.read_text())
+        assert report["renewal_attempted"] is True and report["renewal_completed"] is False
+        assert report["event_attempted"] is False
+        raise RequestFailure("request_transport_failed", stage="identity", retry_safe=False)
+    monkeypatch.setattr(media_gateway.PlaybackGateway, "bootstrap", bootstrap)
+    with pytest.raises(RequestFailure):
+        play_record.run_play_record_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    assert saved_session._http.calls == []
+
+
+@pytest.mark.parametrize("phase", ["identity", "metadata", "event"])
+def test_shared_cooldown_refusal_prevents_request_before_renewal_or_event_intent(saved_session, bootstrap, tmp_path, monkeypatch, phase):
+    calls = []
+    def gate(stage):
+        calls.append(stage)
+        if phase == "identity":
+            return stage != "identity"
+        return calls.count("song_metadata") < (1 if phase == "metadata" else 2)
+    monkeypatch.setattr(play_record, "wait_before_provider_request", gate)
+    saved_session._http.replies.append(Reply(metadata()))
+    path = tmp_path / "synthetic-cooldown.json"
+    with pytest.raises(RequestFailure):
+        play_record.run_play_record_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    report = json.loads(path.read_text())
+    assert report["event_attempted"] is False and report["event_attempts"] == 0
+    assert len(saved_session._http.calls) == (1 if phase == "event" else 0)
+    assert report["renewal_attempted"] is (phase != "identity")
+    assert len(bootstrap) == (0 if phase == "identity" else 1)
+
+
+@pytest.mark.parametrize("operation", ["metadata", "event"])
+def test_actual_rate_limit_observes_retry_after_without_replaying_event(saved_session, bootstrap, tmp_path, monkeypatch, operation):
+    observed = []
+    monkeypatch.setattr(play_record, "observe_provider_failure", lambda failure: observed.append(safe_request_failure(failure)))
+    response = Reply({}, status=429)
+    response.headers = {"retry-after": "90"}
+    if operation == "event":
+        saved_session._http.replies.append(Reply(metadata()))
+    saved_session._http.replies.append(response)
+    path = tmp_path / "synthetic-actual-rate.json"
+    with pytest.raises(SessionError):
+        play_record.run_play_record_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    assert len(observed) == 1 and observed[0]["retry_after_seconds"] == 90
+    assert observed[0]["http_status"] == 429 and observed[0]["retryable"] is False
+    report = json.loads(path.read_text())
+    assert report["event_attempted"] is (operation == "event")
+    if operation == "event":
+        assert report["event_result"] == "unknown" and report["event_attempts"] == 1
 
 
 SONG_ID = "1263607749"
@@ -612,12 +679,14 @@ def test_vault_declared_guard_precedes_cohort_session_and_proxy_loading(method_n
     ("test_play_record", "play_record", "run_play_record_test"),
     ("test_like", "like_test", "run_like_test"),
 ])
-def test_vault_passes_canonical_alternate_declaration_to_core(tmp_path, monkeypatch, method_name, module_name, function_name):
+def test_vault_passes_canonical_alternate_declaration_to_core(tmp_path, monkeypatch, initialize_like_history_binding, method_name, module_name, function_name):
     from anghami_session import like_test
 
     alternate = "1280677978"
     selected = vault_module.AccountVault.__new__(vault_module.AccountVault)
     selected.path = tmp_path / "synthetic.sqlite3"
+    if method_name == "test_like":
+        initialize_like_history_binding(selected)
     selected.enrolled_test_rows = lambda: frozenset({7})
     calls = []
 

@@ -55,6 +55,16 @@ def _test_count(value: str) -> int:
     return count
 
 
+def _preparation_count(value: str) -> int:
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("Preparation count must be a positive integer.") from None
+    if count < 1:
+        raise argparse.ArgumentTypeError("Preparation count must be a positive integer.")
+    return count
+
+
 def _run_repeated_test(vault, args, row, proxy):
     runner = vault.test_play_record if args.command == "test-play-record" else vault.test_like
     options = {} if proxy is None else {"proxy": proxy}
@@ -151,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
         elif name == "proxy-configure":
             command.add_argument("--username", help="PacketStream proxy username; omitted values prompt locally")
         elif name == "prepare-tests":
-            command.add_argument("--count", type=_test_count, required=True, help="Number of additional unique accounts to prepare (1-5)")
+            command.add_argument("--count", type=_preparation_count, required=True, help="Positive number of additional unique accounts to prepare")
             command.add_argument("--start-row", type=int, default=1, help="Look for additional accounts from this registered.txt source row onward")
             command.add_argument("--browser", choices=("chrome", "cloakbrowser"), default="chrome")
             command.add_argument("--headless", action="store_true", help="Capture normal logins without visible browser windows")
@@ -234,12 +244,13 @@ def main(argv: list[str] | None = None) -> int:
                             login_options["reduce_browser_data"] = True
                         saved, metadata = capture_login(**login_options)
                         options = {} if proxy is None else {"proxy": proxy}
-                        result = vault.attach(row, saved, new_password=password if args.prompt_password else None, **options)
+                        result = vault.attach(row, saved, new_password=password if args.prompt_password else None,
+                                              review_session=True, **options)
                         result = {**result, "reduce_browser_data": args.reduce_browser_data}
                         metadata_path = args.vault.parent / f"account-{row}.login-request.redacted.json"
                         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
                     elif args.command == "attach":
-                        result = vault.attach(row, load_session(args.session))
+                        result = vault.attach(row, load_session(args.session), review_session=True)
                     elif args.command == "check":
                         result = vault.check(row)
                     elif args.command == "song":

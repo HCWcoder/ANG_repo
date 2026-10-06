@@ -152,8 +152,12 @@ def test_control_must_reject_authentication_not_just_fail_at_http(bundle, transp
     _, replies = transport
     replies.extend([Reply(), Reply(), control])
     with AnghamiSession(saved=bundle) as session:
-        with pytest.raises(SessionError, match="unauthenticated control"):
+        with pytest.raises(SessionError) as error:
             session.check(negative_control=True)
+    from anghami_session.errors import RequestFailure
+    assert isinstance(error.value, RequestFailure)
+    assert error.value.stage == "negative_control"
+    assert error.value.code == ("session_control_failed" if control.status_code == 200 else "request_http_failed")
 
 
 def test_missing_operation_is_explicit_and_does_not_make_a_request(bundle, transport):

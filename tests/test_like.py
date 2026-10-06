@@ -9,7 +9,76 @@ from types import SimpleNamespace
 import pytest
 
 from anghami_session import accounts, like_test, media_gateway, play_record, vault as vault_module
-from anghami_session.errors import SessionError
+from anghami_session.errors import RequestFailure, SessionError, safe_request_failure
+
+
+@pytest.mark.parametrize("code", ["request_transport_failed", "request_rate_limited", "session_authentication_rejected"])
+def test_typed_like_preflight_failure_is_preserved_without_renewal_or_append(saved_session, bootstrap, tmp_path, code):
+    failure = RequestFailure(code, stage="relations", http_status=429 if code == "request_rate_limited" else None)
+    saved_session.check = lambda **options: (_ for _ in ()).throw(failure)
+    path = tmp_path / "synthetic-like-failure.json"
+    with pytest.raises(RequestFailure) as caught:
+        like_test.run_like_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    assert caught.value is failure
+    report = json.loads(path.read_text())
+    assert report["session_failure"] == safe_request_failure(failure)
+    assert report["renewal_attempted"] is False and report["mutation_attempted"] is False
+    assert saved_session._http.calls == [] and bootstrap == []
+
+
+def test_like_renewal_intent_is_durable_before_media_bootstrap(saved_session, tmp_path, monkeypatch):
+    path = tmp_path / "synthetic-like-renewal-failure.json"
+    def bootstrap(gateway):
+        report = json.loads(path.read_text())
+        assert report["renewal_attempted"] is True and report["renewal_completed"] is False
+        assert report["mutation_attempted"] is False
+        raise RequestFailure("request_transport_failed", stage="identity", retry_safe=False)
+    monkeypatch.setattr(media_gateway.PlaybackGateway, "bootstrap", bootstrap)
+    with pytest.raises(RequestFailure):
+        like_test.run_like_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    assert saved_session._http.calls == []
+
+
+@pytest.mark.parametrize("phase", ["identity", "read", "mutation"])
+def test_like_shared_cooldown_refusal_prevents_request_before_renewal_or_mutation_intent(saved_session, bootstrap, tmp_path, monkeypatch, phase):
+    calls = []
+    def gate(stage):
+        calls.append(stage)
+        if phase == "identity":
+            return stage != "identity"
+        return calls.count("likes_read") < (1 if phase == "read" else 3)
+    monkeypatch.setattr(like_test, "wait_before_provider_request", gate)
+    add_state(saved_session._http, ["42"])
+    path = tmp_path / "synthetic-like-cooldown.json"
+    with pytest.raises(RequestFailure):
+        like_test.run_like_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    report = json.loads(path.read_text())
+    assert report["mutation_attempted"] is False and report["mutation_attempts"] == 0
+    assert len(saved_session._http.calls) == (2 if phase == "mutation" else 0)
+    assert report["renewal_attempted"] is (phase != "identity")
+    assert len(bootstrap) == (0 if phase == "identity" else 1)
+
+
+@pytest.mark.parametrize("operation", ["read", "mutation"])
+def test_actual_like_rate_limit_observes_retry_after_without_replaying_append(saved_session, bootstrap, tmp_path, monkeypatch, operation):
+    observed = []
+    monkeypatch.setattr(like_test, "observe_provider_failure", lambda failure: observed.append(safe_request_failure(failure)))
+    response = Reply({}, status=429)
+    response.headers = {"retry-after": "90"}
+    if operation == "mutation":
+        add_state(saved_session._http, ["42"])
+    saved_session._http.replies.append(response)
+    if operation == "mutation":
+        add_state(saved_session._http, ["42"])
+    path = tmp_path / "synthetic-like-actual-rate.json"
+    with pytest.raises(SessionError):
+        like_test.run_like_test(saved_session, play_record.TEST_SONG_ID, report_path=path)
+    assert len(observed) == 1 and observed[0]["retry_after_seconds"] == 90
+    assert observed[0]["http_status"] == 429 and observed[0]["retryable"] is False
+    report = json.loads(path.read_text())
+    assert report["mutation_attempted"] is (operation == "mutation")
+    if operation == "mutation":
+        assert report["mutation_result"] == "unknown" and report["mutation_attempts"] == 1
 
 
 SONG_ID = play_record.TEST_SONG_ID
@@ -39,6 +108,12 @@ class Reply:
 
     def close(self):
         self.closed = True
+
+
+class TransportFailure(RuntimeError):
+    def __init__(self, code):
+        super().__init__(SECRET)
+        self.code = code
 
 
 class FakeHTTP:
@@ -468,6 +543,7 @@ def test_unknown_append_is_not_retried_even_when_readback_confirms_like(saved_se
     assert report["mutation_result"] == report["api_status"] == "unknown"
     assert report["liked_after"] is True and report["persisted_state_verified"] is True
     assert report["automatic_retry"] is False
+    assert report["verification_read_attempts"] == 1 and report["verification_read_retries"] == 0
     assert saved_session._http.retry is original_retry
     assert [method for method, _, _, _ in saved_session._http.calls].count("POST") == 1
 
@@ -484,6 +560,165 @@ def test_api_acknowledgement_does_not_substitute_for_persisted_like(saved_sessio
     assert report["mutation_accepted"] is True and report["mutation_result"] == "accepted"
     assert report["liked_after"] is False and report["persisted_state_verified"] is False
     assert report["mutation_attempts"] == 1
+    assert report["error_code"] == "readback_not_liked"
+    assert report["verification_read_attempts"] == 1 and report["verification_read_retries"] == 0
+    assert report["verification_read_retryable"] is False
+
+
+@pytest.mark.parametrize("operation", ["GETplaylists", "GETplaylistdata"])
+def test_accepted_append_retries_only_readback_on_same_session(saved_session, bootstrap, tmp_path, monkeypatch, operation):
+    sleeps = []
+    monkeypatch.setattr(like_test.time, "sleep", lambda seconds: sleeps.append(seconds))
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.append(Reply({"status": "ok"}))
+    if operation == "GETplaylistdata":
+        saved_session._http.replies.append(Reply(discovery(["42", SONG_ID])))
+    saved_session._http.replies.append(TransportFailure(7))
+    responses = add_state(saved_session._http, ["42", SONG_ID])
+    path = tmp_path / "accepted-read-recovery.json"
+    report = like_test.run_like_test(saved_session, SONG_ID, report_path=path)
+    assert report["passed"] is True and report["persisted_state_verified"] is True
+    assert report["liked_before"] is False and report["liked_after"] is True
+    assert report["mutation_attempts"] == 1 and report["mutation_accepted"] is True
+    assert report["verification_read_attempts"] == 2 and report["verification_read_retries"] == 1
+    assert report["verification_read_retryable"] is False
+    assert bootstrap == ["authenticate"] and saved_session.checks == [True]
+    calls = saved_session._http.calls
+    assert sum(method == "POST" for method, *_ in calls) == 1
+    assert all(options["params"]["sid"] == SOCKET for _, _, _, options in calls)
+    assert all(response.closed for response in responses)
+    assert sleeps == [0.5]
+    assert safe_report(path)["passed"] is True
+
+
+def test_accepted_append_readback_rate_limit_waits_before_retry_get(saved_session, bootstrap, tmp_path, monkeypatch):
+    observed = []
+    gate_observations = []
+    monkeypatch.setattr(like_test, "observe_provider_failure", lambda failure: observed.append(safe_request_failure(failure)))
+    monkeypatch.setattr(like_test, "wait_before_provider_request", lambda _stage: gate_observations.append(len(observed)) or True)
+    monkeypatch.setattr(like_test.time, "sleep", lambda _seconds: pytest.fail("429 recovery must use the shared cooldown"))
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.append(Reply({"status": "ok"}))
+    limited = Reply({}, status=429)
+    limited.headers = {"Retry-After": "90"}
+    saved_session._http.replies.append(limited)
+    add_state(saved_session._http, ["42", SONG_ID])
+    report = like_test.run_like_test(saved_session, SONG_ID, report_path=tmp_path / "accepted-rate-recovery.json")
+    assert report["passed"] and report["verification_read_retries"] == 1
+    assert len(observed) == 1 and observed[0]["retry_after_seconds"] == 90
+    assert gate_observations == [0, 0, 0, 0, 0, 1, 1]
+    assert sum(method == "POST" for method, *_ in saved_session._http.calls) == 1
+
+
+def test_accepted_append_exhausted_readback_remains_unverified_with_typed_failure(saved_session, bootstrap, tmp_path, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(like_test.time, "sleep", lambda seconds: sleeps.append(seconds))
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.extend([Reply({"status": "ok"}), TransportFailure(7), TransportFailure(56), TransportFailure(7)])
+    path = tmp_path / "accepted-read-exhausted.json"
+    with pytest.raises(SessionError):
+        like_test.run_like_test(saved_session, SONG_ID, report_path=path)
+    report = safe_report(path)
+    assert report["passed"] is False and report["persisted_state_verified"] is False
+    assert report["mutation_accepted"] is True and report["mutation_attempts"] == 1
+    assert report["liked_after"] is None and report["failed_phase"] == "state_after"
+    assert report["error_code"] == "state_read_failed"
+    assert report["session_failure"] == safe_request_failure(RequestFailure("request_transport_failed", stage="likes_read", curl_code=7, retry_safe=False))
+    assert report["verification_read_attempts"] == 3 and report["verification_read_retries"] == 2
+    assert report["verification_read_retryable"] is True
+    assert sleeps == [0.5, 1.0] and bootstrap == ["authenticate"]
+    assert [method for method, *_ in saved_session._http.calls] == ["GET", "GET", "POST", "GET", "GET", "GET"]
+
+
+def test_accepted_append_transient_http_readback_recovers_without_replay(saved_session, bootstrap, tmp_path, monkeypatch):
+    monkeypatch.setattr(like_test.time, "sleep", lambda _seconds: None)
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.extend([Reply({"status": "ok"}), Reply({}, status=503)])
+    add_state(saved_session._http, ["42", SONG_ID])
+    report = like_test.run_like_test(saved_session, SONG_ID, report_path=tmp_path / "accepted-http-recovery.json")
+    assert report["passed"] and report["verification_read_retries"] == 1
+    assert sum(method == "POST" for method, *_ in saved_session._http.calls) == 1
+    assert bootstrap == ["authenticate"]
+
+
+def test_accepted_append_recovery_still_requires_original_playlist_identity(saved_session, bootstrap, tmp_path, monkeypatch):
+    monkeypatch.setattr(like_test.time, "sleep", lambda _seconds: None)
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.extend([Reply({"status": "ok"}), TransportFailure(7)])
+    changed = discovery(["42", SONG_ID])
+    changed["sections"][0]["data"][0]["id"] = str(int(PLAYLIST_ID) + 1)
+    saved_session._http.replies.append(Reply(changed))
+    path = tmp_path / "accepted-read-identity-change.json"
+    with pytest.raises(SessionError):
+        like_test.run_like_test(saved_session, SONG_ID, report_path=path)
+    report = safe_report(path)
+    assert report["error_code"] == "playlist_identity_changed"
+    assert report["verification_read_attempts"] == 2 and report["verification_read_retryable"] is False
+    assert report["liked_after"] is None and report["persisted_state_verified"] is False
+    assert [method for method, *_ in saved_session._http.calls] == ["GET", "GET", "POST", "GET", "GET"]
+
+
+@pytest.mark.parametrize("failure", [TransportFailure(60), TransportFailure(98), TransportFailure(99), RuntimeError(SECRET), Reply({}, status=401), Reply({}, status=403), Reply({}, status=407), Reply({}, status=404), Reply(ValueError(SECRET)), Reply({"status": "failed"})])
+def test_accepted_append_does_not_retry_tls_auth_unknown_or_semantic_readback_failure(saved_session, bootstrap, tmp_path, failure):
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.extend([Reply({"status": "ok"}), failure])
+    path = tmp_path / "accepted-nonretry-read.json"
+    with pytest.raises(SessionError):
+        like_test.run_like_test(saved_session, SONG_ID, report_path=path)
+    report = safe_report(path)
+    assert report["verification_read_attempts"] == 1 and report["verification_read_retries"] == 0
+    assert report["verification_read_retryable"] is False
+    assert report["passed"] is False and report["mutation_attempts"] == 1
+    assert len(saved_session._http.calls) == 4 and bootstrap == ["authenticate"]
+
+
+def test_unknown_append_transport_failure_does_not_enable_readback_retries(saved_session, bootstrap, tmp_path):
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.extend([TransportFailure(56), TransportFailure(7)])
+    path = tmp_path / "unknown-append-no-retry.json"
+    with pytest.raises(SessionError):
+        like_test.run_like_test(saved_session, SONG_ID, report_path=path)
+    report = safe_report(path)
+    assert report["mutation_accepted"] is None and report["mutation_attempts"] == 1
+    assert report["verification_read_attempts"] == 1 and report["verification_read_retries"] == 0
+    assert report["verification_read_retryable"] is False
+    assert [method for method, *_ in saved_session._http.calls] == ["GET", "GET", "POST", "GET"]
+
+
+@pytest.mark.parametrize("failure, expected", [
+    (RequestFailure("request_transport_failed", stage="likes_read", curl_code=7, retry_safe=False), True),
+    (RequestFailure("request_transport_failed", stage="likes_read", curl_code=60, retry_safe=False), False),
+    (RequestFailure("request_transport_failed", stage="likes_read", curl_code=7, http_status=401, retry_safe=False), False),
+    (RequestFailure("request_http_failed", stage="likes_read", http_status=503, curl_code=60, retry_safe=False), False),
+    (RequestFailure("request_transport_failed", stage="identity", curl_code=7), False),
+    (RequestFailure("request_transport_failed", stage="likes_read", retry_safe=False), False),
+    (RequestFailure("request_http_failed", stage="likes_read", http_status=503, retry_safe=False), True),
+    (RequestFailure("request_rate_limited", stage="likes_read", http_status=429, retry_safe=False), True),
+    (RequestFailure("request_http_failed", stage="likes_read", http_status=403, retry_safe=False), False),
+    (RequestFailure("session_response_invalid", stage="likes_read"), False),
+])
+def test_readback_recovery_helper_requires_typed_transient_read_failure(failure, expected):
+    assert like_test.retryable_like_verification_failure(failure) is expected
+    assert like_test.retryable_like_verification_failure(safe_request_failure(failure)) is expected
+
+
+def test_accepted_append_readback_cooldown_refusal_does_not_repeat_reads(saved_session, bootstrap, tmp_path, monkeypatch):
+    stages = []
+    def gate(stage):
+        stages.append(stage)
+        return len(stages) <= 5
+    monkeypatch.setattr(like_test, "wait_before_provider_request", gate)
+    add_state(saved_session._http, ["42"])
+    saved_session._http.replies.extend([Reply({"status": "ok"}), Reply({}, status=429)])
+    monkeypatch.setattr(like_test, "observe_provider_failure", lambda _failure: None)
+    path = tmp_path / "accepted-cooldown-pending.json"
+    with pytest.raises(RequestFailure):
+        like_test.run_like_test(saved_session, SONG_ID, report_path=path)
+    report = safe_report(path)
+    assert report["verification_read_attempts"] == 2 and report["verification_read_retries"] == 1
+    assert report["verification_read_retryable"] is True
+    assert report["session_failure"]["http_status"] == 429
+    assert [method for method, *_ in saved_session._http.calls] == ["GET", "GET", "POST", "GET"]
 
 
 def test_pre_append_journal_failure_prevents_post(saved_session, bootstrap, tmp_path, monkeypatch):

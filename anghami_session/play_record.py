@@ -20,8 +20,10 @@ from uuid import uuid4
 from curl_cffi.const import CurlInfo
 from curl_cffi.requests.session import RetryStrategy
 
+from .bandwidth import measured_request
 from .client import GATEWAY_URL, validate_session
-from .errors import SessionError
+from .errors import RequestFailure, SessionError, safe_request_failure
+from .provider_recovery import observe_provider_failure, retry_after_seconds, wait_before_provider_request
 from .media_gateway import PlaybackGateway
 from .test_settings import DEFAULT_TEST_SONG_ID, validate_test_song_id
 
@@ -40,9 +42,10 @@ _COUNTERS = {
 class _Failure(SessionError):
     """Only fixed messages/codes from this module can enter the safe report."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, request_failure=None):
         super().__init__(message)
         self.code = code
+        self.request_failure = request_failure
 
 
 def _validated_test_song(song_id, declared_song_id, *, message="This test command is limited to the declared test song.") -> str:
@@ -106,9 +109,31 @@ def _journal(report: dict, report_path) -> None:
             output.write("\n")
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, target)
-    except Exception:
-        raise _Failure("journal_failed", "The test report could not be saved. Check the report path before any further test.") from None
+        replacement_deadline = time.monotonic() + 2
+        while True:
+            try:
+                os.replace(temporary, target)
+                break
+            except OSError as exc:
+                windows_contention = os.name == "nt" and (
+                    isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in {5, 32, 33}
+                )
+                if not windows_contention or time.monotonic() >= replacement_deadline:
+                    raise
+                # Retry only the local atomic rename, never an account request.
+                time.sleep(0.1)
+    except Exception as exc:
+        failure = _Failure("journal_failed", "The test report could not be saved. Check the report path before any further test.")
+        failure.local_diagnostics = {"error_kind": "filesystem_error" if isinstance(exc, OSError) else "report_error"}
+        if isinstance(exc, OSError):
+            for name in ("errno", "winerror"):
+                try:
+                    value = getattr(exc, name, None)
+                except Exception:
+                    continue
+                if type(value) is int and 0 <= value <= 65535:
+                    failure.local_diagnostics[name] = value
+        raise failure from None
     finally:
         if temporary is not None:
             try:
@@ -184,8 +209,10 @@ class _LegacyAdapter:
         if operation == "GETsong":
             if self.metadata_requests or self.event_attempts:
                 raise _Failure("metadata_repeat_blocked", "The test permits one metadata request only.")
-            self.metadata_requests += 1
             self.report["phase"] = "metadata"
+            if not wait_before_provider_request("song_metadata"):
+                raise RequestFailure("request_rate_limited", stage="song_metadata", http_status=429, retry_after_seconds=121, retry_safe=False)
+            self.metadata_requests += 1
         else:
             if self.event_attempts or self.duration is None:
                 raise _Failure("event_repeat_blocked", "The test permits one event after validated song metadata only.")
@@ -196,6 +223,8 @@ class _LegacyAdapter:
                     raise ValueError
             except (KeyError, TypeError, ValueError):
                 raise _Failure("legacy_claim_invalid", "The original play function produced an unsupported synthetic duration.") from None
+            if not wait_before_provider_request("song_metadata"):
+                raise RequestFailure("request_rate_limited", stage="song_metadata", http_status=429, retry_after_seconds=121, retry_safe=False)
             self.event_attempts += 1
             self.report.update({
                 "phase": "event", "event_attempted": True, "event_attempts": 1,
@@ -206,20 +235,26 @@ class _LegacyAdapter:
             _journal(self.report, self.report_path)
         response = None
         try:
-            response = self.http.get(
+            response = measured_request(self.http, "get",
                 GATEWAY_URL, params=dict(params), headers=dict(self.headers),
                 timeout=25, allow_redirects=False,
             )
-        except Exception:
+        except Exception as exc:
             _record_bandwidth(self.report, function)
-            raise _Failure("transport_failed", "The test request failed in transport. An attempted event has an unknown result; do not automatically resend it.") from None
+            failure = RequestFailure("request_transport_failed", stage="song_metadata", curl_code=getattr(exc, "code", None), retry_safe=False) if operation == "GETsong" else None
+            raise _Failure("transport_failed", "The test request failed in transport. An attempted event has an unknown result; do not automatically resend it.", request_failure=failure) from None
         _record_bandwidth(self.report, function, response)
         try:
             status = getattr(response, "status_code", None)
             if isinstance(status, int) and not isinstance(status, bool):
                 self.report["metadata_http_status" if operation == "GETsong" else "event_http_status"] = status
             if status != 200:
-                raise _Failure("http_rejected", "The test gateway did not return a successful HTTP response.")
+                failure = RequestFailure("request_rate_limited" if status == 429 else "request_http_failed", stage="song_metadata", http_status=status,
+                    retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)), retry_safe=False)
+                observe_provider_failure(failure)
+                if operation != "GETsong":
+                    failure = None
+                raise _Failure("http_rejected", "The test gateway did not return a successful HTTP response.", request_failure=failure)
             try:
                 payload = response.json()
             except Exception:
@@ -308,6 +343,7 @@ def run_play_record_test(session, song_id, *, report_path=None, declared_song_id
         "downstream_statistics_verified": False, "automatic_retry": False,
         "authenticated": False, "negative_control_passed": False,
         "server_account_identity_verified": False, "metadata_verified": False,
+        "renewal_attempted": False, "renewal_completed": False,
         "metadata_duration_seconds": None, "reported_play_seconds": None,
         "reported_play_fraction": None, "event_attempted": False,
         "event_attempts": 0, "event_accepted": False,
@@ -345,7 +381,13 @@ def run_play_record_test(session, song_id, *, report_path=None, declared_song_id
         ):
             raise _Failure("preflight_failed", "The selected session did not pass authentication and its negative control.")
         report.update({"authenticated": True, "negative_control_passed": True, "phase": "account_identity"})
-        PlaybackGateway(session).bootstrap()
+        gateway = PlaybackGateway(session)
+        if not wait_before_provider_request("identity"):
+            raise RequestFailure("request_rate_limited", stage="identity", http_status=429, retry_after_seconds=121, retry_safe=False)
+        report["renewal_attempted"] = True
+        _journal(report, report_path)
+        gateway.bootstrap()
+        report["renewal_completed"] = True
         report["server_account_identity_verified"] = True
         adapter = _LegacyAdapter(http, headers, sid, fingerprint, report, report_path, song_id=song_id)
         functions["play_song"](adapter, song_id, fingerprint, sid)
@@ -355,15 +397,20 @@ def run_play_record_test(session, song_id, *, report_path=None, declared_song_id
         _journal(report, report_path)
         return report
     except Exception as exc:
+        failure = safe_request_failure(exc) or safe_request_failure(getattr(exc, "request_failure", None))
         report.update({
             "failed_phase": report["phase"], "phase": "failed",
-            "error_code": exc.code if isinstance(exc, _Failure) else "test_failed",
+            "error_code": exc.code if isinstance(exc, (_Failure, RequestFailure)) else "test_failed",
             "elapsed_seconds": round(time.perf_counter() - started, 6),
         })
+        if failure:
+            report["session_failure"] = failure
         try:
             _journal(report, report_path)
         except _Failure:
             raise SessionError("The test report could not be saved. An attempted event may have an unknown result; do not automatically resend it.") from None
+        if isinstance(exc, RequestFailure):
+            raise
         message = str(exc) if isinstance(exc, _Failure) else "The synthetic play-record test failed. Check the safe report; do not automatically resend an attempted event."
         raise SessionError(message) from None
     finally:

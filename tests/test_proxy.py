@@ -198,6 +198,7 @@ def offline_http(monkeypatch):
             return state["reply"]
 
     monkeypatch.setattr(proxy.requests, "Session", FakeSession)
+    monkeypatch.setattr(proxy, "wait_country_lookup_start", lambda: True)
     return state
 
 
@@ -207,6 +208,7 @@ def test_country_verification_is_one_fresh_cookie_free_verified_proxy_request(of
     assert report == {
         **config.summary(), "country_verified": True, "proxy_used": True,
         "http_status": 200, "proxy_connect_http_status": 200,
+        "country_check_attempts": 1,
     }
     assert_redacted(json.dumps(report))
     assert "private" not in report
@@ -214,8 +216,38 @@ def test_country_verification_is_one_fresh_cookie_free_verified_proxy_request(of
     transport, = offline_http["instances"]
     assert transport.options == config.transport_options()
     assert "cookies" not in transport.options and "headers" not in transport.options
-    assert transport.calls == [("https://ipinfo.io/json", {"timeout": 25, "allow_redirects": False})]
+    assert transport.calls == [("https://api.country.is/", {"timeout": 25, "allow_redirects": False})]
     assert transport.closed and offline_http["reply"].closed
+
+
+def test_country_service_response_does_not_expose_the_exit_ip(offline_http):
+    offline_http["reply"] = Reply(payload={"ip": "192.0.2.25", "country": "EG"})
+    report = proxy.PacketStreamProxy(USERNAME, AUTH_KEY).verify_country()
+    assert report["country_verified"] is True
+    assert "192.0.2.25" not in json.dumps(report)
+    assert "ip" not in report
+
+
+def test_country_service_429_is_not_retried_against_another_service(offline_http):
+    offline_http["reply"] = Reply(status=429)
+    offline_http["reply"].headers = {"Retry-After": "60"}
+    with pytest.raises(proxy.ProxyCountryError) as failure:
+        proxy.PacketStreamProxy(USERNAME, AUTH_KEY).verify_country()
+    assert failure.value.diagnostics["http_status"] == 429
+    assert failure.value.diagnostics["retry_after_seconds"] == 60
+    assert len(offline_http["instances"]) == 1
+    assert offline_http["instances"][0].calls == [
+        ("https://api.country.is/", {"timeout": 25, "allow_redirects": False}),
+    ]
+
+
+def test_country_lookup_waits_for_start_permission_before_creating_transport(offline_http, monkeypatch):
+    monkeypatch.setattr(proxy, "wait_country_lookup_start", lambda: False)
+    with pytest.raises(proxy.ProxyCountryError) as failure:
+        proxy.PacketStreamProxy(USERNAME, AUTH_KEY).verify_country()
+    assert failure.value.diagnostics["http_status"] == 429
+    assert failure.value.diagnostics["retryable"] is False
+    assert offline_http["instances"] == []
 
 
 @pytest.mark.parametrize("reply", [

@@ -13,7 +13,10 @@ import time
 from urllib.parse import parse_qsl, urlsplit
 
 from .client import GATEWAY_URL
-from .errors import SessionError
+from .bandwidth import measured_request
+from .errors import RequestFailure, SessionError
+from .provider_recovery import observe_provider_failure, retry_after_seconds
+from curl_cffi.curl import CurlError
 
 _SALT = "-Jlfi6:CFND;bpKs;svX]dj@"
 
@@ -110,23 +113,32 @@ class PlaybackGateway:
         }
         try:
             body = _encrypt(payload, request_key)
-            response = self.session._http.post(
+            response = measured_request(self.session._http, "post",
                 GATEWAY_URL, params=params, data=body, headers=headers,
                 timeout=25, allow_redirects=False,
             )
             self.session._require_proxy_route(response)
             if response.status_code != 200:
-                raise SessionError(f"Media API returned HTTP {response.status_code}.")
+                failure = RequestFailure("request_rate_limited" if response.status_code == 429 else "request_http_failed",
+                                     stage="identity" if authenticate else "metadata",
+                                     http_status=response.status_code,
+                                     retry_after_seconds=retry_after_seconds(getattr(response, "headers", None)),
+                                     retry_safe=False)
+                observe_provider_failure(failure)
+                raise failure
             data = response.json()
             if isinstance(data, dict) and isinstance(data.get("reply"), str):
                 data = _decrypt(data["reply"], response_key)
             if not isinstance(data, dict) or data.get("status") != "ok" or data.get("error"):
-                raise SessionError("Anghami did not accept the saved media session. Refresh the selected account if verification is required.")
+                raise RequestFailure("session_authentication_rejected" if authenticate and isinstance(data, dict) and data.get("status") == "failed" else "session_response_invalid",
+                                     stage="identity" if authenticate else "metadata", retry_safe=False)
             return data
         except SessionError:
             raise
         except Exception as exc:
-            raise SessionError(f"Media API failed ({type(exc).__name__}).") from None
+            raise RequestFailure("request_transport_failed" if isinstance(exc, (CurlError, OSError)) else "session_response_invalid",
+                                 stage="identity" if authenticate else "metadata",
+                                 curl_code=getattr(exc, "code", None), retry_safe=False) from None
 
     def bootstrap(self) -> None:
         agent = self.headers.get("user-agent", "")
@@ -147,7 +159,8 @@ class PlaybackGateway:
             or not isinstance(authentication.get("email"), str)
             or authentication["email"].strip().casefold() != identity
         ):
-            raise SessionError("The media bootstrap did not identify the selected account. Refresh its login.")
+            mismatch = isinstance(authentication, dict) and isinstance(authentication.get("email"), str) and bool(authentication["email"].strip()) and bool(identity)
+            raise RequestFailure("session_identity_mismatch" if mismatch else "session_response_invalid", stage="identity", retry_safe=False)
         required = ("reqkey", "reskey", "socketsessionid", "signingkey")
         if any(
             not isinstance(authentication.get(name), str) or not authentication[name]

@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from anghami_session import capture
-from anghami_session.errors import LoginCaptureError, SessionError, safe_login_failure
+from anghami_session.errors import LoginCaptureError, RequestFailure, SessionError, safe_login_failure, safe_request_failure
 
 
 PRIVATE = "synthetic-password synthetic-session https://private.invalid/?sid=synthetic-secret"
@@ -35,6 +35,7 @@ def browser(monkeypatch):
     state = SimpleNamespace(
         fail_stage=None, fail_type=BrowserTimeout, close_error=None,
         page_status=200, auth_status=200, auth_body={"status": "ok"}, auth_json_error=None,
+        page_headers={}, auth_headers={},
         emit_auth=True, emit_sessions=True, calls=[], callback=None,
     )
 
@@ -53,7 +54,7 @@ def browser(monkeypatch):
             url=capture.GATEWAY_URL + "?type=authenticate&password=synthetic-password",
             method="POST", headers={"cookie": "synthetic-session"},
         )
-        state.callback(SimpleNamespace(request=request, status=state.auth_status, json=response_json))
+        state.callback(SimpleNamespace(request=request, status=state.auth_status, json=response_json, headers=state.auth_headers))
 
     class Locator:
         def __init__(self, stage):
@@ -73,7 +74,7 @@ def browser(monkeypatch):
     class Page:
         def goto(self, *args, **options):
             visit("login_page")
-            return SimpleNamespace(status=state.page_status)
+            return SimpleNamespace(status=state.page_status, headers=state.page_headers)
 
         def get_by_role(self, role, **options):
             name = options["name"]
@@ -133,6 +134,61 @@ def login():
         email="synthetic@example.invalid", password="synthetic-password",
         headless=True, browser_backend="chrome",
     )
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_provider_login_page_status_stops_before_password_and_never_flags_account(browser, status):
+    browser.page_status = status
+    with pytest.raises(RequestFailure) as caught:
+        login()
+    failure = safe_request_failure(caught.value)
+    assert failure["failure_category"] == "provider" and failure["http_status"] == status
+    assert "password" not in browser.calls and "submit" not in browser.calls
+    assert browser.calls[-1] == "browser_cleanup"
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+@pytest.mark.parametrize("home_timeout", [False, True])
+def test_provider_auth_status_wins_over_failed_body_and_never_resubmits_password(browser, status, home_timeout):
+    browser.auth_status = status
+    browser.auth_body = {"status": "failed", "error": PRIVATE}
+    if home_timeout:
+        browser.fail_stage = "home"
+    with pytest.raises(RequestFailure) as caught:
+        login()
+    failure = safe_request_failure(caught.value)
+    assert failure["failure_category"] == "provider" and failure["http_status"] == status
+    assert failure["retryable"] is False
+    assert browser.calls.count("submit") == 1 and browser.calls.count("password") == 1
+    assert browser.calls[-1] == "browser_cleanup"
+    assert_safe(failure)
+
+
+@pytest.mark.parametrize("status", [401, 403, 407])
+def test_non_success_http_status_does_not_prove_browser_account_rejection(browser, status):
+    browser.auth_status, browser.fail_stage = status, "home"
+    browser.auth_body = {"status": "failed"}
+    with pytest.raises(LoginCaptureError) as caught:
+        login()
+    assert caught.value.code == "login_timeout"
+
+
+@pytest.mark.parametrize("at_auth", [False, True])
+def test_actual_browser_429_response_observes_global_cooldown_even_after_password(browser, at_auth):
+    from anghami_session import provider_recovery
+    if at_auth:
+        browser.auth_status = 429
+        browser.auth_headers = {"retry-after": "600"}
+        browser.auth_body = {"status": "failed"}
+        browser.fail_stage = "home"
+    else:
+        browser.page_status = 429
+        browser.page_headers = {"retry-after": "600"}
+    with pytest.raises(RequestFailure) as caught:
+        login()
+    assert safe_request_failure(caught.value)["retry_after_seconds"] == 600
+    assert provider_recovery._deadlines["anghami"] - provider_recovery._clock() > 599
+    assert browser.calls.count("submit") == int(at_auth)
 
 
 @pytest.mark.parametrize("stage", [

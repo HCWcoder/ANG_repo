@@ -229,9 +229,11 @@ def test_scope_guards_precede_session_loading_and_proxy_check(method, bad_select
 
 
 @pytest.mark.parametrize("method", ["test_like", "test_play_record", "request"])
-def test_proxy_country_failure_prevents_origin_transport_and_test_runner(monkeypatch, tmp_path, method):
+def test_proxy_country_failure_prevents_origin_transport_and_test_runner(monkeypatch, tmp_path, initialize_like_history_binding, method):
     selected = vault_module.AccountVault.__new__(vault_module.AccountVault)
     selected.path = tmp_path / "synthetic.sqlite3"
+    if method == "test_like":
+        initialize_like_history_binding(selected)
     selected.session = lambda _row: {"synthetic": "saved"}
     proxy = FakeProxy(failure=SessionError("Synthetic proxy country verification failed"))
     report_path = None
@@ -264,9 +266,11 @@ def test_proxy_country_failure_prevents_origin_transport_and_test_runner(monkeyp
 
 
 @pytest.mark.parametrize("method", ["test_like", "test_play_record", "request"])
-def test_vault_verifies_route_once_before_constructing_bound_transport(monkeypatch, tmp_path, method):
+def test_vault_verifies_route_once_before_constructing_bound_transport(monkeypatch, tmp_path, initialize_like_history_binding, method):
     selected = vault_module.AccountVault.__new__(vault_module.AccountVault)
     selected.path = tmp_path / "synthetic.sqlite3"
+    if method == "test_like":
+        initialize_like_history_binding(selected)
     events = []
     bundle = {"synthetic": "saved"}
     proxy = FakeProxy(events=events)

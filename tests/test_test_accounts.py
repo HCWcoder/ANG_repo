@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from anghami_session import client, like_test, play_record, vault as vault_module
-from anghami_session.errors import SessionError
+from anghami_session.errors import SessionError, SessionStorageError
 
 
 SECRET = "synthetic-account-password-and-session-secret"
@@ -56,7 +56,7 @@ def synthetic_vault(tmp_path, monkeypatch):
         """)
         connection.executemany("INSERT INTO metadata VALUES (?, ?)", {
             "format_version": "1", "index_key": key, "imported_at_utc": STAMP,
-            "source_sha256": "synthetic-source", "backup_relative": "backups/synthetic.dpapi",
+            "source_sha256": "a" * 64, "backup_relative": "backups/synthetic.dpapi",
         }.items())
         for row, email in identities.items():
             record = {
@@ -187,7 +187,7 @@ def test_candidates_are_ordered_distinct_and_exclude_all_enrolled_identities(syn
 
 
 @pytest.mark.parametrize("count,start_row", [
-    (0, 1), (6, 1), (True, 1), ("2", 1), (1, 0), (1, True), (1, "8"),
+    (0, 1), (-1, 1), (True, 1), ("2", 1), (1, 0), (1, True), (1, "8"),
 ])
 def test_invalid_candidate_bounds_are_rejected_before_database_access(count, start_row):
     selected = vault_module.AccountVault.__new__(vault_module.AccountVault)
@@ -247,8 +247,10 @@ def test_failed_insert_rolls_back_optional_table_creation(synthetic_vault):
 
     selected._db.set_authorizer(deny_enrollment_insert)
     try:
-        with pytest.raises(sqlite3.DatabaseError):
+        with pytest.raises(SessionStorageError) as failure:
             selected.enable_test_account(8)
+        assert failure.value.sqlite_code == sqlite3.SQLITE_AUTH
+        assert failure.value.attempts == 1
     finally:
         selected._db.set_authorizer(None)
     assert selected.enrolled_test_rows() == DEFAULT_ROWS

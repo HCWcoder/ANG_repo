@@ -209,8 +209,12 @@ def test_bootstrap_requires_matching_selected_account(session, authentication, m
     authentication["email"] = identity
     media = gateway.PlaybackGateway(session)
     monkeypatch.setattr(media, "_post", lambda *args, **kwargs: {"status": "ok", "authenticate": authentication})
-    with pytest.raises(SessionError, match="identify the selected account"):
+    with pytest.raises(SessionError) as error:
         media.bootstrap()
+    from anghami_session.errors import RequestFailure
+    assert isinstance(error.value, RequestFailure)
+    assert error.value.code == ("session_identity_mismatch" if identity else "session_response_invalid")
+    assert error.value.retry_safe is False
     assert media.tokens is None
     assert not session._http.calls
 

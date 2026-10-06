@@ -359,7 +359,7 @@ def test_job_rejects_non_json_content_type(console, content_type):
 
 
 def test_oversized_json_rejected_before_submit(console):
-    status, _, _ = request(console, "POST", "/api/jobs", body=b" " * (16 * 1024 + 1), headers={"Content-Type": "application/json"})
+    status, _, _ = request(console, "POST", "/api/jobs", body=b" " * (ui_server.MAX_BODY + 1), headers={"Content-Type": "application/json"})
     assert status == 413
     assert console.service.manager.calls == []
 
@@ -457,7 +457,9 @@ def test_state_uses_existing_vault_without_exposing_private_metadata(real_consol
     assert payload["vault"]["records"] == 10
     assert payload["cohort"]["ready_rows"] == [1, 7]
     assert payload["proxy"]["configured"] is False
-    assert payload["limits"] == {"accounts": 5, "test_accounts": 2, "tests_per_account": 5}
+    assert payload["limits"] == {"accounts": 5, "test_accounts": 2, "tests_per_account": 5,
+                                 "workers": None, "preparation_workers": None, "worker_integer_max": 2**53 - 1,
+                                 "max_consecutive_failures": None, "failure_integer_max": 2**53 - 1}
     assert SECRET.encode() not in content
     assert b"encrypted_source_backup" not in content
     assert b"source_sha256" not in content

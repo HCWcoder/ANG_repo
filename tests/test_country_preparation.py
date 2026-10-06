@@ -295,6 +295,20 @@ def test_active_ui_job_pauses_before_any_account_preparation(imported, tmp_path,
     assert_private_safe(progress, vault)
 
 
+@pytest.mark.parametrize("status", ["succeeded", "failed", "completed_with_failures"])
+def test_finished_ui_test_job_does_not_block_country_preparation(imported, tmp_path, status):
+    vault, source = imported
+    plan = country.build_plan(vault, source, country="LB")
+    ui_path = tmp_path / "ui-last-job.json"
+    ui_path.write_text(json.dumps({"id": "synthetic-finished-test", "status": status, "action": "play"}), encoding="utf-8")
+    calls = []
+    summary = country.run_plan(vault, plan, tmp_path / "country-progress.json", limit=1,
+                               prepare=successful_prepare(calls), ui_path=ui_path)
+    assert calls == [4]
+    assert summary["pause_reason"] not in {"ui_busy", "ui_unavailable"}
+    assert_private_safe(summary, vault)
+
+
 @pytest.mark.parametrize("failed", [False, True])
 def test_direct_runtime_ignores_then_restores_proxy_environment_and_launch_function(imported, tmp_path, monkeypatch, failed):
     import anghami_session

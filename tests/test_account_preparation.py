@@ -1,6 +1,7 @@
 """Account preparation and selected-cohort CLI tests are entirely offline."""
 
 import builtins
+from copy import deepcopy
 import json
 import sys
 from types import SimpleNamespace
@@ -29,6 +30,14 @@ class PreparationVault:
         self.sessions = {} if sessions is None else sessions
         self.failure = failure
         self.events = []
+        self.reviewed = {}
+        self.pending_candidates = {}
+
+    def pending_session(self, row):
+        return deepcopy(self.pending_candidates.get(row))
+
+    def save_pending_session(self, row, saved):
+        self.pending_candidates[row] = deepcopy(saved)
 
     def select_test_candidates(self, count, *, start_row=1):
         self.events.append(("select", count, start_row))
@@ -48,10 +57,18 @@ class PreparationVault:
         self.events.append(("attach", row, saved, options))
         if self.failure is not None and row == self.failure[0]:
             raise self.failure[1]
+        self.pending_candidates.pop(row, None)
         return {"source_row": row, "verified": True}
 
     def enable_test_account(self, row):
         self.events.append(("enable", row))
+
+    def record_account_failure(self, row, failure):
+        self.reviewed[row] = dict(failure)
+        self.events.append(("review", row))
+
+    def failure_review(self):
+        return {"failed_rows": sorted(self.reviewed), "accounts": [], "total": len(self.reviewed)}
 
 
 def forbid_browser_imports(monkeypatch):
@@ -92,10 +109,10 @@ def safe_report(vault):
     return json.loads(text)
 
 
-@pytest.mark.parametrize("count", [0, 6, -1, True, 1.0, "1", None])
+@pytest.mark.parametrize("count", [0, -1, True, 1.0, "1", None])
 def test_invalid_count_rejected_before_selection(tmp_path, count):
     vault = PreparationVault(tmp_path / "synthetic.sqlite3")
-    with pytest.raises(SessionError, match="1-5"):
+    with pytest.raises(SessionError, match="positive integer"):
         preparation.prepare_test_accounts(vault, count=count)
     assert vault.events == [] and list(tmp_path.iterdir()) == []
 
@@ -330,7 +347,7 @@ def test_cancelled_login_does_not_attach_or_enable(tmp_path, monkeypatch):
     assert report["failed_phase"] == "login" and report["error_code"] == "cancelled"
 
 
-def test_login_failure_journal_keeps_only_safe_stage_and_http_evidence_and_stops(tmp_path, monkeypatch):
+def test_login_rejection_enters_review_and_keeps_preparing_the_next_account(tmp_path, monkeypatch):
     vault = PreparationVault(tmp_path / "synthetic.sqlite3", sessions={9: SAVED})
     error = LoginCaptureError(
         "login_rejected", stage="home", page_http_status=200, auth_http_status=200,
@@ -341,15 +358,14 @@ def test_login_failure_journal_keeps_only_safe_stage_and_http_evidence_and_stops
     error.email = SYNTHETIC_EMAIL
     fake_capture(monkeypatch, vault, failure=error)
     reports = []
-    with pytest.raises(LoginCaptureError) as caught:
-        preparation.prepare_test_accounts(vault, count=2, progress=reports.append)
-    assert caught.value is error
-    assert [event[0] for event in vault.events] == ["select", "session", "record", "capture"]
+    preparation.prepare_test_accounts(vault, count=2, progress=reports.append)
+    assert [event[0] for event in vault.events] == ["select", "session", "record", "capture", "review", "session", "attach", "enable"]
     assert vault.sessions == {9: SAVED}
     report = safe_report(vault)
-    assert report["prepared_rows"] == [] and report["attempted_accounts"] == 1
-    assert report["failed_row"] == 8 and report["failed_phase"] == "login"
-    assert report["error_code"] == "login_rejected"
+    assert report["prepared_rows"] == [9] and report["attempted_accounts"] == 2
+    assert report["account_failed_rows"] == [8] and report["connection_pending_rows"] == []
+    assert report["passed"] is False and report["phase"] == "complete"
+    assert vault.reviewed[8]["code"] == "session_authentication_rejected"
     assert report["login_failure"] == {
         "code": "login_rejected", "stage": "home", "page_http_status": 200,
         "auth_http_status": 200, "authentication_result": "failed",
@@ -515,7 +531,8 @@ def test_login_cli_browser_data_choice_keeps_proxy_and_account_validation(cli_va
         **({"proxy": proxy} if use_proxy else {}),
         **({"reduce_browser_data": True} if reduce_browser_data else {}),
     }]
-    assert attachments == [(7, SAVED, {"new_password": None, **({"proxy": proxy} if use_proxy else {})})]
+    assert attachments == [(7, SAVED, {"new_password": None, "review_session": True,
+                                     **({"proxy": proxy} if use_proxy else {})})]
     assert proxy_loads == ([cli_vault.path.parent / "packetstream.dpapi"] if use_proxy else [])
     output = capsys.readouterr().out
     assert SYNTHETIC_PASSWORD not in output and SYNTHETIC_EMAIL not in output

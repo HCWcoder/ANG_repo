@@ -213,8 +213,11 @@ def test_http_country_failure_blocks_launch_and_prompts(offline_browser, monkeyp
 def test_invalid_geo_http_status_prevents_login(offline_browser, status, capsys):
     state = offline_browser
     state.controls["status"] = status
-    with pytest.raises(SessionError, match="did not verify Egypt") as error:
+    with pytest.raises(SessionError) as error:
         run_capture(state)
+    from anghami_session.proxy import ProxyCountryError
+    assert isinstance(error.value, ProxyCountryError)
+    assert error.value.failure_kind == ("transport_error" if type(status) is not int else "authentication_rejected" if status == 407 else "http_failure")
     labels = [call[0] for call in state.calls]
     assert "login.goto" not in labels and "login.fill" not in labels
     assert labels.count("context.new_page") == 1
