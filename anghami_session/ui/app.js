@@ -1262,6 +1262,7 @@
         payload.workers = integer($('test-workers').value, 1, Number.MAX_SAFE_INTEGER, 'Concurrent workers');
         payload.max_consecutive_failures = integer($('test-failure-limit').value, 1, Number.MAX_SAFE_INTEGER, 'Consecutive failure limit');
       }
+      if (action === 'play' && $('test-with-audio')?.checked) payload.with_audio = true;
       if (['play', 'like', 'song'].includes(action)) payload.song_id = String(state.test_song_id);
       await submitJob(payload, 'workbench-error');
     } catch (error) { showError('workbench-error', error.message); }

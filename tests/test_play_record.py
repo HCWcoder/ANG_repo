@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import traceback
@@ -342,11 +343,16 @@ def test_original_function_runs_once_with_saved_auth_and_pre_attempt_audit(saved
     assert [params["type"] for _, params, _ in saved_session._http.calls] == ["GETsong", "REGISTERwebplay"]
     for url, params, options in saved_session._http.calls:
         assert url == media_gateway.GATEWAY_URL
-        assert params["sid"] == params["appsid"] == SECRET
+        expected_sid = SECRET if params["type"] == "GETsong" else SOCKET
+        assert params["sid"] == params["appsid"] == expected_sid
         assert params["fingerprint"] == FINGERPRINT
-        assert options["headers"] == saved_session._template("relations")["headers"]
         assert options["timeout"] == 25
         assert options["allow_redirects"] is False
+    base_headers = saved_session._template("relations")["headers"]
+    assert saved_session._http.calls[0][2]["headers"] == base_headers
+    event_headers = saved_session._http.calls[1][2]["headers"]
+    assert {key: value for key, value in event_headers.items() if key != "x-socket-id"} == base_headers
+    assert event_headers["x-socket-id"]
     event = saved_session._http.calls[1][1]
     assert event["songid"] == SONG_ID
     assert 114.99 - 0.000001 <= float(event["playsecs"]) <= 115.0
@@ -603,6 +609,157 @@ assert not blocked.intersection(sys.modules)
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+
+DEVICE_ID = "123e4567-e89b-42d3-a456-426655440000"
+
+
+def test_event_requests_match_observed_web_client_headers(saved_session, bootstrap, tmp_path):
+    headers = saved_session._template("relations")["headers"]
+    headers["cookie"] = headers["cookie"] + "; xxlfingerprint=" + DEVICE_ID
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    path = tmp_path / "audit.json"
+    report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=path)
+    assert report["passed"] is True
+    metadata_call, event_call = (options for _, _, options in saved_session._http.calls)
+    assert metadata_call["headers"]["x-angh-udid"] == DEVICE_ID
+    assert "x-socket-id" not in metadata_call["headers"]
+    assert event_call["headers"]["x-angh-udid"] == DEVICE_ID
+    assert event_call["headers"]["x-socket-id"] == SOCKET
+    for _, params, _ in saved_session._http.calls:
+        assert "web_medium" not in params
+    assert DEVICE_ID not in path.read_text(encoding="utf-8")
+
+
+def test_event_requests_omit_device_header_without_device_cookie(saved_session, bootstrap, tmp_path):
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json")
+    assert report["passed"] is True
+    for _, _, options in saved_session._http.calls:
+        assert "x-angh-udid" not in options["headers"]
+
+
+def test_downstream_public_count_increase_is_verified(saved_session, bootstrap, tmp_path, monkeypatch):
+    counts = iter([80436, 80436, 80439])
+    monkeypatch.setattr(play_record, "_public_play_count", lambda http, song: next(counts))
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    path = tmp_path / "audit.json"
+    report = play_record.run_play_record_test(
+        saved_session, SONG_ID, report_path=path,
+        verify_downstream=True, verify_timeout=30, verify_interval=0.1,
+    )
+    assert report["passed"] is True and report["phase"] == "complete"
+    assert report["public_play_count_before"] == 80436
+    assert report["public_play_count_after"] == 80439
+    assert report["public_play_count_change"] == 3
+    assert report["downstream_statistics_verified"] is True
+    assert report["downstream_observation_seconds"] is not None
+    assert safe_report(path)["downstream_statistics_verified"] is True
+
+
+def test_downstream_count_unchanged_is_reported_unverified(saved_session, bootstrap, tmp_path, monkeypatch):
+    monkeypatch.setattr(play_record, "_public_play_count", lambda http, song: 80436)
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    report = play_record.run_play_record_test(
+        saved_session, SONG_ID, report_path=tmp_path / "audit.json",
+        verify_downstream=True, verify_timeout=1, verify_interval=0.1,
+    )
+    assert report["passed"] is True
+    assert report["public_play_count_before"] == 80436
+    assert report["public_play_count_after"] == 80436
+    assert report["public_play_count_change"] == 0
+    assert report["downstream_statistics_verified"] is False
+
+
+def test_downstream_verification_unavailable_keeps_event_result(saved_session, bootstrap, tmp_path, monkeypatch):
+    monkeypatch.setattr(play_record, "_public_play_count", lambda http, song: None)
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    report = play_record.run_play_record_test(
+        saved_session, SONG_ID, report_path=tmp_path / "audit.json",
+        verify_downstream=True, verify_timeout=1, verify_interval=0.1,
+    )
+    assert report["passed"] is True and report["event_accepted"] is True
+    assert report["downstream_statistics_verified"] is False
+    assert report["public_play_count_before"] is None
+    assert report["public_play_count_after"] is None
+    assert report["public_play_count_change"] is None
+    assert report["downstream_observation_seconds"] is None
+
+
+@pytest.mark.parametrize("options", [
+    {"verify_timeout": 0}, {"verify_timeout": 601}, {"verify_interval": 0},
+    {"verify_timeout": "abc"}, {"verify_timeout": 10, "verify_interval": 20},
+])
+def test_downstream_verification_timing_validated(saved_session, bootstrap, tmp_path, options):
+    with pytest.raises(SessionError, match="verification timing"):
+        play_record.run_play_record_test(
+            saved_session, SONG_ID, report_path=tmp_path / "audit.json",
+            verify_downstream=True, **options,
+        )
+    assert saved_session._http.calls == [] and bootstrap == []
+
+
+def test_public_play_count_pattern_variants():
+    found = play_record._PUBLIC_PLAYS_PATTERN.search("value>80.4K <span>Plays &q;likes&q;:3897,&q;plays&q;:80434")
+    assert found.group(1) == "80434"
+    assert play_record._PUBLIC_PLAYS_PATTERN.search('"likes":3897,"plays":80434').group(1) == "80434"
+    assert play_record._PUBLIC_PLAYS_PATTERN.search("&quot;plays&quot;:7").group(1) == "7"
+    assert play_record._PUBLIC_PLAYS_PATTERN.search("no count here") is None
+
+
+def test_event_uses_rotated_session_and_socket_from_bootstrap(saved_session, bootstrap, tmp_path):
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json")
+    assert report["passed"] is True
+    metadata_call, event_call = (options for _, _, options in saved_session._http.calls)
+    event = saved_session._http.calls[1][1]
+    assert event["sid"] == event["appsid"] == SOCKET
+    assert event_call["headers"]["x-socket-id"] == SOCKET
+    metadata_params = saved_session._http.calls[0][1]
+    assert metadata_params["sid"] == SECRET
+
+
+def test_audio_delivery_runs_before_event_and_claims_decoded_seconds(saved_session, bootstrap, tmp_path, monkeypatch):
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    calls = []
+
+    def media_source(self, requested):
+        assert str(requested) == SONG_ID
+        return {"location": "https://audio.invalid/song.mp3"}
+
+    def fetch(url, agent):
+        calls.append(("fetch", url))
+        return b"\x00" * 100, {"http_status": 206, "content_type": "audio/mpeg", "bytes_received": 100,
+                               "maximum_bytes": 1048576, "range_requested": True, "gateway_credentials_forwarded": False}
+
+    def decode(payload, seconds):
+        calls.append(("decode", len(payload), seconds))
+        return {"engine": "PyAV/FFmpeg", "codec": "mp3", "requested_seconds": seconds, "decoded_seconds": 1.0,
+                "elapsed_seconds": 0.1, "decoded_frames": 2, "pcm_bytes": 64000,
+                "nonzero_audio_samples": True, "audio_output": "silent", "paced_in_real_time": True}
+
+    monkeypatch.setattr(play_record.PlaybackGateway, "media_source", media_source)
+    monkeypatch.setattr("anghami_session.playback._fetch_media", fetch)
+    monkeypatch.setattr("anghami_session.playback._decode_audio", decode)
+    report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_audio=True)
+    assert report["passed"] is True
+    assert calls == [("fetch", "https://audio.invalid/song.mp3"), ("decode", 100, 1)]
+    assert report["audio_requested"] is True and report["audio_bytes"] == 100
+    assert report["audio_decoded_seconds"] == 1.0 and report["audio_codec"] == "mp3"
+    assert report["media_http_status"] == 206
+    event = saved_session._http.calls[1][1]
+    assert float(event["playsecs"]) == 1.0
+    assert report["reported_play_seconds"] == 1.0
+
+
+def test_audio_delivery_failure_prevents_play_event(saved_session, bootstrap, tmp_path, monkeypatch):
+    monkeypatch.setattr(play_record.PlaybackGateway, "media_source",
+                        lambda self, requested: (_ for _ in ()).throw(SessionError("synthetic media failure")))
+    with pytest.raises(SessionError):
+        play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_audio=True)
+    assert saved_session._http.calls == []
+    report = json.loads((tmp_path / "audit.json").read_text())
+    assert report["event_attempted"] is False and report["failed_phase"] == "audio"
 
 
 def test_explicit_alternate_declared_song_runs_original_function_with_only_that_id(saved_session, bootstrap, tmp_path):

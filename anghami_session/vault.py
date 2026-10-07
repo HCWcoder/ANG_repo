@@ -1051,7 +1051,8 @@ class AccountVault:
         with AnghamiSession(saved=self.session(row)) as session:
             return {"source_row": row, **probe_playback(session, song_id, seconds=seconds)}
 
-    def test_play_record(self, row: int, song_id: str | int, *, proxy=None, declared_song_id=TEST_SONG_ID) -> dict:
+    def test_play_record(self, row: int, song_id: str | int, *, proxy=None, declared_song_id=TEST_SONG_ID,
+                         verify_downstream: bool = False, with_audio: bool = False) -> dict:
         """One synthetic record on the declared test track and selected test cohort."""
         from .play_record import run_play_record_test
         song_id = _validated_test_song(song_id, declared_song_id)
@@ -1062,6 +1063,10 @@ class AccountVault:
         report_path = self.path.parent / f"account-{row}.test-play-record-report.json"
         with self._http_session(row, proxy, report_path=report_path, song_id=song_id) as session:
             options = {} if song_id == TEST_SONG_ID else {"declared_song_id": song_id}
+            if verify_downstream:
+                options["verify_downstream"] = True
+            if with_audio:
+                options["with_audio"] = True
             report = run_play_record_test(session, song_id, report_path=report_path, **options)
         result = {"source_row": row, **report}
         report_path.write_text(json.dumps(result, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")

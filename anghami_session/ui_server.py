@@ -53,6 +53,7 @@ REPORT_KEYS = frozenset("""
     mutation_attempts mutation_accepted mutation_result mutation_http_status persisted_state_verified
     liked_before liked_after state_read_method reported_play_seconds reported_play_fraction
     downstream_statistics_verified elapsed_seconds bandwidth measurement scope get_song play_song total
+    public_play_count_before public_play_count_after public_play_count_change downstream_observation_seconds
     request_count request_bytes request_body_bytes response_body_bytes response_header_bytes
     measurement_complete download_bytes upload_bytes header_bytes http_transfer_bytes balance_verified
     proxy_requests_attempted origin_requests_sent saved_session_read_attempted saved_session_read_worked
@@ -82,7 +83,7 @@ REPORT_KEYS = frozenset("""
 SAFE_WORDS = frozenset("""
     ok failed succeeded queued running stopped complete preview preparing ready login_required check_failed
     direct proxy_egypt EG chrome cloakbrowser none browser http PacketStream accepted rejected unknown not_attempted
-    skipped_already_liked session_validation legacy_source preflight account_identity metadata event
+    skipped_already_liked session_validation legacy_source preflight account_identity metadata event verification
     mutation state_before state_after session_lookup session_recovery login validation proxy_preflight proxy_preflight_failed
     test_failed preparation_failed cancelled metadata_region_unavailable metadata_invalid event_incomplete
     event_rejected event_unknown state_http_failed mutation_failed mutation_incomplete mutation_unknown
