@@ -1,0 +1,22 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e12]:
+    - heading "Log in now to start creating your library" [level=3] [ref=e13]
+    - generic [ref=e14]:
+      - generic [ref=e15]: Login with Facebook
+      - generic [ref=e19]: Login with Google
+      - generic [ref=e24]: Continue with phone number
+      - generic [ref=e28] [cursor=pointer]: Other login options
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - img "QRCode" [ref=e32]
+          - generic [ref=e34]: Already have anaccount on your phone?
+        - button "Scan QR code" [ref=e36]
+      - generic [ref=e37]:
+        - text: This site is protected by reCAPTCHA and the Google
+        - link "Privacy Policy" [ref=e38] [cursor=pointer]:
+          - /url: https://policies.google.com/privacy
+        - text: and
+        - link "Terms of Service" [ref=e39] [cursor=pointer]:
+          - /url: https://policies.google.com/terms
+        - text: apply.
+  - img "preloader-logo" [ref=e43]

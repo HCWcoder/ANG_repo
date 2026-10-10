@@ -34,7 +34,7 @@ class JobBusyError(SessionError):
 _ACTIONS = frozenset({"prepare", "preview", "play", "like", "check", "song", "login", "proxy-check", "review-sessions"})
 _ROW_ACTIONS = frozenset({"play", "like", "check", "song", "login", "review-sessions"})
 _WORKBENCH_ACTIONS = frozenset({"play", "like", "check", "song"})
-_FIELDS = frozenset({"action", "rows", "review_rows", "count", "start_row", "account_country", "browser", "headless", "proxy_egypt", "proxy_sticky_pool", "proxy_test_session", "song_id", "reduce_browser_data", "no_browser", "workers", "max_consecutive_failures", "resume_preparation", "with_audio"})
+_FIELDS = frozenset({"action", "rows", "review_rows", "count", "start_row", "account_country", "browser", "headless", "proxy_egypt", "proxy_sticky_pool", "proxy_test_session", "song_id", "reduce_browser_data", "no_browser", "workers", "max_consecutive_failures", "resume_preparation", "with_audio", "with_heartbeats"})
 MAX_WORKER_REQUEST = 2**53 - 1
 # Compatibility names describe numeric integrity, not operating concurrency.
 MAX_TEST_WORKERS = MAX_WORKER_REQUEST
@@ -206,7 +206,7 @@ _PHASES = frozenset({
     "account_identity", "metadata", "event", "state_before", "mutation", "state_after", "executing",
     "complete", "failed", "stopped", "proxy_check", "checking", "song_metadata",
     "provider_retry", "provider_wait", "connection_pending", "verification_pending", "account_failed",
-    "session_review", "history_review", "verification", "audio",
+    "session_review", "history_review", "verification", "audio", "heartbeats",
 })
 _BOOL_KEYS = frozenset({
     "passed", "authenticated", "negative_control_passed", "server_account_identity_verified",
@@ -236,7 +236,7 @@ _NUMBER_KEYS = frozenset({
     "requested_tests", "requested_tests_per_account", "duplicate_like_skipped_tests", "history_skipped_tests", "history_held_tests",
     "cached_like_skips", "cached_like_holds",
     "public_play_count_before", "public_play_count_after", "public_play_count_change", "downstream_observation_seconds",
-    "audio_decoded_seconds", "media_http_status",
+    "audio_decoded_seconds", "media_http_status", "heartbeats_sent",
 })
 _ENUMS = {
     "phase": _PHASES, "failed_phase": _PHASES,
@@ -366,11 +366,13 @@ def _validate(payload):
     browser = payload.get("browser", "chrome")
     if not isinstance(browser, str) or browser not in {"chrome", "cloakbrowser"}:
         raise JobValidationError("Choose Chrome or CloakBrowser.")
-    for field in ("headless", "proxy_egypt", "proxy_sticky_pool", "proxy_test_session", "reduce_browser_data", "no_browser", "resume_preparation", "with_audio"):
+    for field in ("headless", "proxy_egypt", "proxy_sticky_pool", "proxy_test_session", "reduce_browser_data", "no_browser", "resume_preparation", "with_audio", "with_heartbeats"):
         if field in payload and type(payload[field]) is not bool:
             raise JobValidationError("Browser and proxy selections must be true or false.")
     if "with_audio" in payload and action != "play":
         raise JobValidationError("Real audio delivery is only available for play tests.")
+    if "with_heartbeats" in payload and action != "play":
+        raise JobValidationError("Playback progress heartbeats are only available for play tests.")
     if "no_browser" in payload and action not in {"prepare", "preview"}:
         raise JobValidationError("Choose a preparation method only for account preparation or preview.")
     no_browser = payload.get("no_browser", False)
@@ -434,6 +436,7 @@ def _validate(payload):
         "reduce_browser_data": False if no_browser else payload.get("reduce_browser_data", False),
         "no_browser": no_browser,
         "with_audio": action == "play" and payload.get("with_audio", False),
+        "with_heartbeats": action == "play" and payload.get("with_heartbeats", False),
     }
     if requested_song is not None:
         options["song_id"] = requested_song
@@ -1350,6 +1353,8 @@ class JobManager:
                     test_options["declared_song_id"] = options["song_id"]
                 if action == "play" and options.get("with_audio"):
                     test_options["with_audio"] = True
+                if action == "play" and options.get("with_heartbeats"):
+                    test_options["with_heartbeats"] = True
                 raw = runner(row, options["song_id"], **test_options)
                 no_write_proven = self._no_engagement_write_proof(action, raw)
                 report = _public_report(raw)

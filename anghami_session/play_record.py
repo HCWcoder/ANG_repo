@@ -3,10 +3,9 @@
 This is an API integration test, not audio playback. The original function
 claims the metadata's full duration without fetching or decoding any audio.
 Authentication checks are read-only; the adapter permits exactly one event.
-The event requests carry the same device and socket headers the real web
-client sends. On demand, a best-effort downstream check compares the song's
-exact public play count before and after the accepted event; an unavailable
-or unchanged count never fails the test and is reported as unverified.
+The play event uses the renewed session's socket identifier and can
+stream the song start and mirror the web client's playqueue progress
+heartbeats before the event, matching a real organic listen.
 """
 
 import ast
@@ -202,6 +201,81 @@ def _device_id_from_headers(headers: dict) -> str | None:
     return None
 
 
+_USER_ID_COOKIE_PATTERN = re.compile(r"[0-9]{1,15}")
+
+
+def _user_id_from_headers(headers: dict) -> str | None:
+    """The numeric account id the web client embeds in the playqueue id."""
+    cookie = headers.get("cookie") if isinstance(headers, dict) else None
+    if not isinstance(cookie, str):
+        return None
+    for part in cookie.split(";"):
+        name, separator, value = part.strip().partition("=")
+        if separator and name == "anlastuid" and _USER_ID_COOKIE_PATTERN.fullmatch(value):
+            return value
+    return None
+
+
+PLAYQUEUE_MODIFY_URL = "https://coussa.anghami.com/playqueue/modify"
+
+
+def _send_play_heartbeats(http, headers, *, sid, fingerprint, user_id, device_id, socket_id,
+                          song_duration, real_seconds, report) -> int:
+    """Mirror the web client's playqueue progress sync during a play.
+
+    Every ~30s of claimed playback the page posts the advancing progress to
+    /playqueue/modify; the completion event only registers after this stream.
+    Heartbeats are best-effort: a failed beat is recorded, never retried and
+    never blocks the play event.
+    """
+    beats = 0
+    interval = max(1.0, real_seconds / 4)
+    queue_id = f"{user_id}-{uuid4()}"
+    progress = 0.0
+    while progress < real_seconds:
+        progress = min(real_seconds, progress + interval)
+        queuediff = json.dumps({
+            "index": 0, "playing": True, "repeatOn": False,
+            "shuffleOn": False, "videoOn": False, "progress": round(progress, 6),
+        }, separators=(",", ":"))
+        payload = {
+            "queuediff": queuediff, "playqueueid": queue_id,
+            "x-socket-id": socket_id, "output": "jsonhp",
+        }
+        if device_id is not None:
+            payload["x-angh-udid"] = device_id + "_web_" + str(int(time.time()))[-7:]
+        params = {
+            "language": "en", "lang": "en", "web2": "true", "userlanguageprod": "en",
+            "fingerprint": fingerprint, "sid": sid, "appsid": sid,
+            "queuediff": queuediff, "playqueueid": queue_id, "x-socket-id": socket_id,
+        }
+        if device_id is not None:
+            params["x-angh-udid"] = payload["x-angh-udid"]
+        request_headers = dict(headers)
+        request_headers["content-type"] = "application/json"
+        if device_id is not None:
+            request_headers["x-angh-udid"] = payload["x-angh-udid"]
+        request_headers["x-socket-id"] = socket_id
+        response = None
+        try:
+            response = measured_request(http, "post", PLAYQUEUE_MODIFY_URL,
+                                        params=params, json=payload, headers=request_headers,
+                                        timeout=25, allow_redirects=False)
+            if getattr(response, "status_code", None) == 200:
+                beats += 1
+        except Exception:
+            break
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+    report["heartbeats_sent"] = beats
+    return beats
+
+
 def _record_bandwidth(report: dict, function: str, response=None) -> None:
     record = report["bandwidth"][function]
     record["request_count"] += 1
@@ -254,6 +328,7 @@ class _LegacyAdapter:
         self.event_attempts = 0
         self.duration = None
         self.claimed_override = None
+        self.skip_legacy_metadata = False
 
     def get(self, url, *, params, headers):
         # The original function's obsolete browser headers are intentionally ignored.
@@ -271,6 +346,10 @@ class _LegacyAdapter:
             raise _Failure("song_scope_invalid", "The original play function attempted a different song.")
         function = "get_song" if operation == "GETsong" else "play_song"
         if operation == "GETsong":
+            if self.skip_legacy_metadata and self.duration is not None:
+                # Metadata already fetched this run (heartbeat mode): replay
+                # the validated result without a second gateway request.
+                return _SafeResponse({"status": 1, "id": self.song_id, "duration": self.duration})
             if self.metadata_requests or self.event_attempts:
                 raise _Failure("metadata_repeat_blocked", "The test permits one metadata request only.")
             self.report["phase"] = "metadata"
@@ -416,7 +495,7 @@ def _selected_session(saved: dict) -> tuple[dict, str, str]:
 
 def run_play_record_test(session, song_id, *, report_path=None, declared_song_id=TEST_SONG_ID,
                          verify_downstream: bool = False, verify_timeout: float = 120, verify_interval: float = 20,
-                         with_audio: bool = False) -> dict:
+                         with_audio: bool = False, with_heartbeats: bool = False) -> dict:
     """Submit at most one synthetic record for the declared test track.
 
     The caller enforces the authorized source-row cohort. This function binds
@@ -448,6 +527,7 @@ def run_play_record_test(session, song_id, *, report_path=None, declared_song_id
         "public_play_count_change": None, "downstream_observation_seconds": None,
         "audio_requested": bool(with_audio), "audio_decoded_seconds": None,
         "audio_codec": None, "media_http_status": None,
+        "heartbeats_sent": 0,
         "authenticated": False, "negative_control_passed": False,
         "server_account_identity_verified": False, "metadata_verified": False,
         "renewal_attempted": False, "renewal_completed": False,
@@ -529,7 +609,29 @@ def run_play_record_test(session, song_id, *, report_path=None, declared_song_id
                 "audio_codec": decoded.get("codec") if type(decoded.get("codec")) is str else None,
                 "media_http_status": int(delivery["http_status"]),
             })
-        functions["play_song"](adapter, song_id, fingerprint, sid)
+        if with_heartbeats:
+            report["phase"] = "heartbeats"
+            _journal(report, report_path)
+            user_id = _user_id_from_headers(headers)
+            if user_id is None:
+                raise _Failure("session_credentials_missing", "The saved session has no numeric account identifier for playqueue sync.")
+            # The legacy play_song calls get_song first then registers the
+            # event. Reproduce that order with the web client's playqueue
+            # progress sync in between: metadata, heartbeat stream, event.
+            functions["get_song"](adapter, song_id, fingerprint, sid)
+            if adapter.duration is None:
+                raise _Failure("metadata_invalid", "The test song metadata did not contain the expected identity and a valid duration.")
+            claimed = adapter.claimed_override if adapter.claimed_override is not None else adapter.duration
+            _send_play_heartbeats(http, headers, sid=socket, fingerprint=fingerprint,
+                                  user_id=user_id, device_id=adapter.device_id, socket_id=socket,
+                                  song_duration=adapter.duration, real_seconds=claimed,
+                                  report=report)
+            if report["heartbeats_sent"] < 1:
+                raise _Failure("heartbeat_failed", "The playqueue progress sync did not reach the gateway. The play event was not sent.")
+            adapter.skip_legacy_metadata = True
+            functions["play_song"](adapter, song_id, fingerprint, sid)
+        else:
+            functions["play_song"](adapter, song_id, fingerprint, sid)
         if adapter.event_attempts != 1 or report["event_accepted"] is not True:
             raise _Failure("event_incomplete", "The original play function did not complete the expected single test event.")
         if baseline is not None:

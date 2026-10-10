@@ -1,0 +1,19 @@
+- generic [ref=e87]:
+  - generic [ref=e90] [cursor=pointer]
+  - generic [ref=e92]:
+    - heading "Complete your profile" [level=3] [ref=e93]
+    - button [ref=e94] [cursor=pointer]
+    - generic [ref=e95]:
+      - generic [ref=e96]: Your full name
+      - textbox "Enter your full name" [ref=e98]: Probe Register
+      - generic [ref=e99]: Your date of birth
+      - textbox "MM / DD / YYYY" [ref=e101]: 01/15/1995
+      - generic [ref=e102]:
+        - generic [ref=e103]: Gender
+        - generic [ref=e104]:
+          - checkbox [checked] [ref=e106] [cursor=pointer]
+          - generic [ref=e108]: Male
+        - generic [ref=e109]:
+          - checkbox [ref=e111] [cursor=pointer]
+          - generic [ref=e113]: Female
+      - button "Create an account" [active] [ref=e114] [cursor=pointer]

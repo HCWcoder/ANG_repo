@@ -1,0 +1,13 @@
+- generic [ref=e45]:
+  - generic [ref=e48] [cursor=pointer]
+  - generic [ref=e49]:
+    - banner [ref=e50]:
+      - heading "Never miss a thing" [level=1] [ref=e51]
+      - heading "Continue with your social accounts" [level=3] [ref=e52]
+    - list [ref=e53]:
+      - listitem [ref=e54]:
+        - generic [ref=e55]: Continue with Apple
+    - heading "or continue by email" [level=4] [ref=e59]
+    - generic [ref=e60]:
+      - textbox "Enter your email" [ref=e62]: probe.register.20261008@onengine.ai
+      - button "Continue" [active] [ref=e63] [cursor=pointer]

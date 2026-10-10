@@ -1,0 +1,255 @@
+- generic [ref=e87]:
+  - generic [ref=e90] [cursor=pointer]
+  - generic [ref=e92]:
+    - heading "Complete your profile" [level=3] [ref=e93]
+    - button [ref=e94] [cursor=pointer]
+    - generic [ref=e95]:
+      - generic [ref=e96]: Your full name
+      - textbox "Enter your full name" [ref=e98]: Probe Register
+      - generic [ref=e99]: Your date of birth
+      - generic [ref=e100] [cursor=pointer]:
+        - textbox "MM / DD / YYYY" [ref=e101]: 01/15/1995
+        - generic [ref=e116]:
+          - generic [ref=e118]:
+            - button "Previous month" [ref=e120]
+            - generic [ref=e122]:
+              - combobox "Select month" [ref=e123]:
+                - option "January" [selected]: Jan
+                - option "February": Feb
+                - option "March": Mar
+                - option "April": Apr
+                - option "May"
+                - option "June": Jun
+                - option "July": Jul
+                - option "August": Aug
+                - option "September": Sep
+                - option "October": Oct
+                - option "November": Nov
+                - option "December": Dec
+              - combobox "Select year" [ref=e124]:
+                - option "1920" [selected]
+                - option "1921"
+                - option "1922"
+                - option "1923"
+                - option "1924"
+                - option "1925"
+                - option "1926"
+                - option "1927"
+                - option "1928"
+                - option "1929"
+                - option "1930"
+                - option "1931"
+                - option "1932"
+                - option "1933"
+                - option "1934"
+                - option "1935"
+                - option "1936"
+                - option "1937"
+                - option "1938"
+                - option "1939"
+                - option "1940"
+                - option "1941"
+                - option "1942"
+                - option "1943"
+                - option "1944"
+                - option "1945"
+                - option "1946"
+                - option "1947"
+                - option "1948"
+                - option "1949"
+                - option "1950"
+                - option "1951"
+                - option "1952"
+                - option "1953"
+                - option "1954"
+                - option "1955"
+                - option "1956"
+                - option "1957"
+                - option "1958"
+                - option "1959"
+                - option "1960"
+                - option "1961"
+                - option "1962"
+                - option "1963"
+                - option "1964"
+                - option "1965"
+                - option "1966"
+                - option "1967"
+                - option "1968"
+                - option "1969"
+                - option "1970"
+                - option "1971"
+                - option "1972"
+                - option "1973"
+                - option "1974"
+                - option "1975"
+                - option "1976"
+                - option "1977"
+                - option "1978"
+                - option "1979"
+                - option "1980"
+                - option "1981"
+                - option "1982"
+                - option "1983"
+                - option "1984"
+                - option "1985"
+                - option "1986"
+                - option "1987"
+                - option "1988"
+                - option "1989"
+                - option "1990"
+                - option "1991"
+                - option "1992"
+                - option "1993"
+                - option "1994"
+                - option "1995"
+                - option "1996"
+                - option "1997"
+                - option "1998"
+                - option "1999"
+                - option "2000"
+                - option "2001"
+                - option "2002"
+                - option "2003"
+                - option "2004"
+                - option "2005"
+                - option "2006"
+                - option "2007"
+                - option "2008"
+                - option "2009"
+                - option "2010"
+                - option "2011"
+                - option "2012"
+                - option "2013"
+                - option "2014"
+                - option "2015"
+                - option "2016"
+                - option "2017"
+                - option "2018"
+                - option "2019"
+                - option "2020"
+                - option "2021"
+                - option "2022"
+                - option "2023"
+                - option "2024"
+                - option "2025"
+                - option "2026"
+                - option "2027"
+                - option "2028"
+                - option "2029"
+                - option "2030"
+                - option "2031"
+                - option "2032"
+                - option "2033"
+                - option "2034"
+                - option "2035"
+                - option "2036"
+            - button "Next month" [ref=e126]
+          - grid [ref=e129]:
+            - generic [ref=e130]:
+              - generic [ref=e131]: Mo
+              - generic [ref=e132]: Tu
+              - generic [ref=e133]: We
+              - generic [ref=e134]: Th
+              - generic [ref=e135]: Fr
+              - generic [ref=e136]: Sa
+              - generic [ref=e137]: Su
+            - row [ref=e138]:
+              - gridcell "Monday, September 28, 2026" [ref=e139]:
+                - generic [ref=e140]: "28"
+              - gridcell "Tuesday, September 29, 2026" [ref=e141]:
+                - generic [ref=e142]: "29"
+              - gridcell "Wednesday, September 30, 2026" [ref=e143]:
+                - generic [ref=e144]: "30"
+              - gridcell "Thursday, October 1, 2026" [ref=e145]:
+                - generic [ref=e146]: "1"
+              - gridcell "Friday, October 2, 2026" [ref=e147]:
+                - generic [ref=e148]: "2"
+              - gridcell "Saturday, October 3, 2026" [ref=e149]:
+                - generic [ref=e150]: "3"
+              - gridcell "Sunday, October 4, 2026" [ref=e151]:
+                - generic [ref=e152]: "4"
+            - row [ref=e153]:
+              - gridcell "Monday, October 5, 2026" [ref=e154]:
+                - generic [ref=e155]: "5"
+              - gridcell "Tuesday, October 6, 2026" [ref=e156]:
+                - generic [ref=e157]: "6"
+              - gridcell "Wednesday, October 7, 2026" [ref=e158]:
+                - generic [ref=e159]: "7"
+              - gridcell "Thursday, October 8, 2026" [active] [ref=e160]:
+                - generic [ref=e161]: "8"
+              - gridcell "Friday, October 9, 2026" [ref=e162]:
+                - generic [ref=e163]: "9"
+              - gridcell "Saturday, October 10, 2026" [ref=e164]:
+                - generic [ref=e165]: "10"
+              - gridcell "Sunday, October 11, 2026" [ref=e166]:
+                - generic [ref=e167]: "11"
+            - row [ref=e168]:
+              - gridcell "Monday, October 12, 2026" [ref=e169]:
+                - generic [ref=e170]: "12"
+              - gridcell "Tuesday, October 13, 2026" [ref=e171]:
+                - generic [ref=e172]: "13"
+              - gridcell "Wednesday, October 14, 2026" [ref=e173]:
+                - generic [ref=e174]: "14"
+              - gridcell "Thursday, October 15, 2026" [ref=e175]:
+                - generic [ref=e176]: "15"
+              - gridcell "Friday, October 16, 2026" [ref=e177]:
+                - generic [ref=e178]: "16"
+              - gridcell "Saturday, October 17, 2026" [ref=e179]:
+                - generic [ref=e180]: "17"
+              - gridcell "Sunday, October 18, 2026" [ref=e181]:
+                - generic [ref=e182]: "18"
+            - row [ref=e183]:
+              - gridcell "Monday, October 19, 2026" [ref=e184]:
+                - generic [ref=e185]: "19"
+              - gridcell "Tuesday, October 20, 2026" [ref=e186]:
+                - generic [ref=e187]: "20"
+              - gridcell "Wednesday, October 21, 2026" [ref=e188]:
+                - generic [ref=e189]: "21"
+              - gridcell "Thursday, October 22, 2026" [ref=e190]:
+                - generic [ref=e191]: "22"
+              - gridcell "Friday, October 23, 2026" [ref=e192]:
+                - generic [ref=e193]: "23"
+              - gridcell "Saturday, October 24, 2026" [ref=e194]:
+                - generic [ref=e195]: "24"
+              - gridcell "Sunday, October 25, 2026" [ref=e196]:
+                - generic [ref=e197]: "25"
+            - row [ref=e198]:
+              - gridcell "Monday, October 26, 2026" [ref=e199]:
+                - generic [ref=e200]: "26"
+              - gridcell "Tuesday, October 27, 2026" [ref=e201]:
+                - generic [ref=e202]: "27"
+              - gridcell "Wednesday, October 28, 2026" [ref=e203]:
+                - generic [ref=e204]: "28"
+              - gridcell "Thursday, October 29, 2026" [ref=e205]:
+                - generic [ref=e206]: "29"
+              - gridcell "Friday, October 30, 2026" [ref=e207]:
+                - generic [ref=e208]: "30"
+              - gridcell "Saturday, October 31, 2026" [ref=e209]:
+                - generic [ref=e210]: "31"
+              - gridcell "Sunday, November 1, 2026" [ref=e211]:
+                - generic [ref=e212]: "1"
+            - row [ref=e213]:
+              - gridcell "Monday, November 2, 2026" [ref=e214]:
+                - generic [ref=e215]: "2"
+              - gridcell "Tuesday, November 3, 2026" [ref=e216]:
+                - generic [ref=e217]: "3"
+              - gridcell "Wednesday, November 4, 2026" [ref=e218]:
+                - generic [ref=e219]: "4"
+              - gridcell "Thursday, November 5, 2026" [ref=e220]:
+                - generic [ref=e221]: "5"
+              - gridcell "Friday, November 6, 2026" [ref=e222]:
+                - generic [ref=e223]: "6"
+              - gridcell "Saturday, November 7, 2026" [ref=e224]:
+                - generic [ref=e225]: "7"
+              - gridcell "Sunday, November 8, 2026" [ref=e226]:
+                - generic [ref=e227]: "8"
+      - generic [ref=e102]:
+        - generic [ref=e103]: Gender
+        - generic [ref=e104]:
+          - checkbox [checked] [ref=e106] [cursor=pointer]
+          - generic [ref=e108]: Male
+        - generic [ref=e109]:
+          - checkbox [ref=e111] [cursor=pointer]
+          - generic [ref=e113]: Female
+      - button "Create an account" [ref=e114] [cursor=pointer]

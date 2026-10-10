@@ -762,6 +762,53 @@ def test_audio_delivery_failure_prevents_play_event(saved_session, bootstrap, tm
     assert report["event_attempted"] is False and report["failed_phase"] == "audio"
 
 
+USER_ID = "123545794"
+
+
+def _with_user_id(saved_session):
+    headers = saved_session._template("relations")["headers"]
+    headers["cookie"] = headers["cookie"] + "; anlastuid=" + USER_ID
+
+
+def test_heartbeats_stream_progress_before_event(saved_session, bootstrap, tmp_path, monkeypatch):
+    _with_user_id(saved_session)
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    beats = []
+
+    def heartbeats(http, headers, *, sid, fingerprint, user_id, device_id, socket_id, song_duration, real_seconds, report):
+        beats.append({"sid": sid, "user_id": user_id, "socket_id": socket_id,
+                      "song_duration": song_duration, "real_seconds": real_seconds})
+        report["heartbeats_sent"] = 4
+        return 4
+
+    monkeypatch.setattr(play_record, "_send_play_heartbeats", heartbeats)
+    report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_heartbeats=True)
+    assert report["passed"] is True and report["heartbeats_sent"] == 4
+    assert beats == [{"sid": SOCKET, "user_id": USER_ID, "socket_id": SOCKET,
+                      "song_duration": 114.99, "real_seconds": 114.99}]
+    # One metadata request (replayed for the legacy function), then the event.
+    assert [params["type"] for _, params, _ in saved_session._http.calls] == ["GETsong", "REGISTERwebplay"]
+    assert saved_session._http.calls[1][1]["sid"] == SOCKET
+
+
+def test_heartbeat_failure_blocks_event(saved_session, bootstrap, tmp_path, monkeypatch):
+    _with_user_id(saved_session)
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    monkeypatch.setattr(play_record, "_send_play_heartbeats", lambda *a, **k: 0)
+    with pytest.raises(SessionError, match="progress sync"):
+        play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_heartbeats=True)
+    assert [params["type"] for _, params, _ in saved_session._http.calls] == ["GETsong"]
+    report = json.loads((tmp_path / "audit.json").read_text())
+    assert report["event_attempted"] is False and report["failed_phase"] == "metadata"
+
+
+def test_heartbeats_require_user_id(saved_session, bootstrap, tmp_path):
+    saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
+    with pytest.raises(SessionError, match="account identifier"):
+        play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_heartbeats=True)
+    assert saved_session._http.calls == []
+
+
 def test_explicit_alternate_declared_song_runs_original_function_with_only_that_id(saved_session, bootstrap, tmp_path):
     alternate = "1280677978"
     saved_session._http.replies.extend([

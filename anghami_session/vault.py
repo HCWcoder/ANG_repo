@@ -1052,7 +1052,7 @@ class AccountVault:
             return {"source_row": row, **probe_playback(session, song_id, seconds=seconds)}
 
     def test_play_record(self, row: int, song_id: str | int, *, proxy=None, declared_song_id=TEST_SONG_ID,
-                         verify_downstream: bool = False, with_audio: bool = False) -> dict:
+                         verify_downstream: bool = False, with_audio: bool = False, with_heartbeats: bool = False) -> dict:
         """One synthetic record on the declared test track and selected test cohort."""
         from .play_record import run_play_record_test
         song_id = _validated_test_song(song_id, declared_song_id)
@@ -1067,6 +1067,8 @@ class AccountVault:
                 options["verify_downstream"] = True
             if with_audio:
                 options["with_audio"] = True
+            if with_heartbeats:
+                options["with_heartbeats"] = True
             report = run_play_record_test(session, song_id, report_path=report_path, **options)
         result = {"source_row": row, **report}
         report_path.write_text(json.dumps(result, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
