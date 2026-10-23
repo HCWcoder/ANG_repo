@@ -5,3 +5,4 @@ names
 curl_cffi==0.16.3
 tzdata
 playwright
+tqdm

@@ -1,15 +1,68 @@
 """Migrate the account list offline and manage a selected account's normal login."""
 
 import argparse
+import ctypes
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import getpass
 import json
 from pathlib import Path
 import sys
+import threading
 
 from .errors import SessionError
+
+
+def _title(text: str) -> None:
+    try:
+        ctypes.windll.kernel32.SetConsoleTitleW(text)
+    except Exception:
+        pass
 from .proxy import load_packetstream_proxy, save_packetstream_credentials
 from .store import load_session
 from .vault import AccountVault, DEFAULT_VAULT_PATH, ROOT, migrate_registered
+
+
+def _load_proxy_file(path) -> list:
+    import re
+    from secrets import token_hex
+    from urllib.parse import urlparse
+    from .proxy import PACKETSTREAM_ENDPOINT, PacketStreamProxy
+    proxies = []
+    for lineno, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "@" in line:
+            parsed = urlparse(line if "://" in line else "http://" + line)
+            username = parsed.username or ""
+            password = parsed.password or ""
+            endpoint = PACKETSTREAM_ENDPOINT
+        else:
+            parts = line.split(":")
+            if len(parts) != 4:
+                continue
+            if parts[1].isdigit() and not parts[3].isdigit():
+                host, port, username, password = parts  # host:port:user:pass
+            else:
+                username, password, host, port = parts  # user:pass:host:port
+            endpoint = f"https://{host}:{port}" if port == "31111" else f"http://{host}:{port}"
+        modifiers = re.search(r"_country-([A-Za-z]{2})(?:_session-([A-Za-z0-9]{1,64}))?$", password)
+        country, session_label = "EG", None
+        if modifiers:
+            country = modifiers.group(1).upper()
+            session_label = modifiers.group(2)
+            password = password[:modifiers.start()]
+        if not username or not password:
+            continue
+        try:
+            proxies.append(PacketStreamProxy.from_route(
+                username, password, session_label or token_hex(8), endpoint, country=country,
+            ))
+        except SessionError:
+            raise SessionError(f"Invalid PacketStream route on line {lineno} of {path}.") from None
+    if not proxies:
+        raise SessionError(f"No valid proxy URLs found in {path}.")
+    return proxies
 
 
 def _select(vault: AccountVault, args) -> int:
@@ -29,7 +82,28 @@ def _select(vault: AccountVault, args) -> int:
     return rows[0]
 
 
+def _declared_song_id(args):
+    from .test_settings import read_test_song_id
+    return read_test_song_id(args.vault.parent / "test-settings.json")
+
+
 def _select_test_rows(vault, args):
+    declared = _declared_song_id(args)
+    if args.song_id != declared:
+        raise SessionError(f"This test command is limited to the declared test song {declared}.")
+    country = getattr(args, "country", None)
+    if country is not None:
+        enrolled = vault.enrolled_test_rows()
+        tags = vault.preparation_country_tags()
+        rows = sorted(row for row in enrolled if tags.get(row) == country)
+        if not rows:
+            raise SessionError(f"No enrolled test accounts are tagged as {country}.")
+        skip = getattr(args, "skip", 0) or 0
+        if skip:
+            rows = rows[skip:]
+        if not rows:
+            raise SessionError(f"No {country} accounts remain after skipping {skip}.")
+        return rows
     rows = getattr(args, "rows", None)
     if rows is None:
         return [_select(vault, args)]
@@ -39,9 +113,6 @@ def _select_test_rows(vault, args):
         vault.record(row)
     if not set(rows).issubset(vault.enrolled_test_rows()):
         raise SessionError("One or more rows are not prepared for testing. Use accounts prepare-tests and accounts test-accounts.")
-    from .play_record import TEST_SONG_ID
-    if args.song_id != TEST_SONG_ID:
-        raise SessionError(f"This test command is limited to the declared test song {TEST_SONG_ID}.")
     return rows
 
 
@@ -68,6 +139,13 @@ def _preparation_count(value: str) -> int:
 def _run_repeated_test(vault, args, row, proxy):
     runner = vault.test_play_record if args.command == "test-play-record" else vault.test_like
     options = {} if proxy is None else {"proxy": proxy}
+    if args.command == "test-play-record" and getattr(args, "with_heartbeats", False):
+        options["with_heartbeats"] = True
+    if args.command == "test-play-record":
+        declared = _declared_song_id(args)
+        from .test_settings import DEFAULT_TEST_SONG_ID
+        if declared != DEFAULT_TEST_SONG_ID:
+            options["declared_song_id"] = declared
     if args.count == 1:
         return runner(row, args.song_id, **options)
     from .play_record import _journal
@@ -83,6 +161,7 @@ def _run_repeated_test(vault, args, row, proxy):
     _journal(batch, report_path)
     try:
         for number in range(1, args.count + 1):
+            _title(f"{number}/{args.count}")
             batch.update({"attempted_tests": number, "active_test": number})
             _journal(batch, report_path)
             result = runner(row, args.song_id, **options)
@@ -98,34 +177,136 @@ def _run_repeated_test(vault, args, row, proxy):
         raise
 
 
-def _run_selected_tests(vault, args, rows, proxy):
+def _run_selected_tests(vault, args, rows, proxy, proxies=None):
     if len(rows) == 1:
         return _run_repeated_test(vault, args, rows[0], proxy)
     from .play_record import _journal
     report_path = args.vault.parent / f"{args.command}.accounts-batch-report.json"
+    total = len(rows)
+    workers = min(getattr(args, "workers", 8), total)
     report = {
         "operation": args.command, "song_id": args.song_id, "selected_rows": rows,
-        "requested_accounts": len(rows), "tests_per_account": args.count,
+        "requested_accounts": total, "tests_per_account": args.count,
+        "workers": workers,
         "attempted_accounts": 0, "completed_accounts": 0, "results": [],
         "passed": False, "phase": "running", "automatic_retry": False,
     }
     if proxy is not None:
         report["proxy"] = proxy.summary()
     _journal(report, report_path)
-    try:
-        for number, row in enumerate(rows, 1):
-            report.update({"active_row": row, "attempted_accounts": number})
+
+    # Pre-load all sessions sequentially in the main thread.
+    # Windows DPAPI serializes concurrent decrypt calls from the same process,
+    # so doing this upfront is faster than having 8+ threads all decrypt at once.
+    from .client import AnghamiSession
+    from .play_record import run_play_record_test, TEST_SONG_ID as _TEST_SONG_ID, _journal
+    from .test_settings import DEFAULT_TEST_SONG_ID
+    from tqdm import tqdm
+    import colorama
+    colorama.init()
+    preloaded = {}
+    skipped_held = []
+    with tqdm(total=len(rows), unit="acc", desc="\033[36mLoading sessions\033[0m", dynamic_ncols=True, colour="cyan") as load_bar:
+        for row in rows:
+            try:
+                preloaded[row] = vault.session(row)
+            except Exception:
+                skipped_held.append(row)
+            load_bar.update(1)
+    rows = [row for row in rows if row in preloaded]
+    if skipped_held:
+        print(f"Skipped {len(skipped_held)} held/invalid accounts: {skipped_held[:10]}{'...' if len(skipped_held) > 10 else ''}")
+    if not rows:
+        raise SessionError("No valid sessions available after filtering held accounts.")
+    total = len(rows)
+    workers = min(getattr(args, "workers", 8), total)
+    report.update({"selected_rows": rows, "requested_accounts": total, "workers": workers, "skipped_held": skipped_held})
+    report_path_for = lambda row: args.vault.parent / f"account-{row}.{args.command}-report.json"
+    declared = _declared_song_id(args)
+
+    import time as _time
+    _start_time = _time.monotonic()
+
+    lock = threading.Lock()
+    counters = {"ok": 0, "fail": 0, "done": 0}
+    results_by_row = {}
+
+    bar = tqdm(total=total, unit="acc", desc="\033[32mRunning tests\033[0m", dynamic_ncols=True, colour="green")
+    bar.set_postfix(ok=0, fail=0)
+
+    def _elapsed_str():
+        secs = int(_time.monotonic() - _start_time)
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+    def _refresh_title():
+        _title(f"[{_elapsed_str()}] test-play-record")
+
+    row_index = {row: i for i, row in enumerate(rows)}
+
+    def _pick_proxy(row):
+        if proxies:
+            return proxies[row_index[row] % len(proxies)]
+        return proxy
+
+    def _run_one(row):
+        try:
+            saved = preloaded[row]
+            rpath = report_path_for(row)
+            options = {}
+            if declared != DEFAULT_TEST_SONG_ID:
+                options["declared_song_id"] = declared
+            if getattr(args, "with_heartbeats", False):
+                options["with_heartbeats"] = True
+            _proxy = _pick_proxy(row)
+            with AnghamiSession(saved=saved, **({} if _proxy is None else {"proxy": _proxy})) as session:
+                import json as _json
+                report = run_play_record_test(session, args.song_id, report_path=rpath, **options)
+            result = {"source_row": row, **report}
+            rpath.write_text(_json.dumps(result, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+            passed = result.get("passed", False)
+        except Exception as exc:
+            result = {"source_row": row, "passed": False, "phase": "stopped", "error": str(exc)}
+            passed = False
+        with lock:
+            counters["done"] += 1
+            if passed:
+                counters["ok"] += 1
+            else:
+                counters["fail"] += 1
+            results_by_row[row] = result
+            bar.set_postfix(
+                ok=f"\033[32m{counters['ok']}\033[0m",
+                fail=f"\033[31m{counters['fail']}\033[0m",
+            )
+            bar.update(1)
+        _refresh_title()
+        return row, result
+
+    _refresh_title()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_run_one, row): row for row in rows}
+        for future in as_completed(futures):
+            row, result = future.result()
+            with lock:
+                report["completed_accounts"] = counters["done"]
+                report["attempted_accounts"] = counters["done"]
             _journal(report, report_path)
-            report["results"].append(_run_repeated_test(vault, args, row, proxy))
-            report["completed_accounts"] = number
-            _journal(report, report_path)
-        report.update({"passed": True, "phase": "complete"})
-        _journal(report, report_path)
-        return report
-    except BaseException:
-        report.update({"passed": False, "phase": "stopped", "failed_row": report.get("active_row")})
-        _journal(report, report_path)
-        raise
+    bar.close()
+
+    report["results"] = [results_by_row[row] for row in rows]
+    all_passed = all(
+        (r.get("passed", False) if isinstance(r, dict) else bool(r))
+        for r in report["results"]
+    )
+    with lock:
+        o, f = counters["ok"], counters["fail"]
+    _title(f"[{_elapsed_str()}] done")
+    report.update({"passed": all_passed, "phase": "complete",
+                   "completed_accounts": total, "attempted_accounts": total})
+    _journal(report, report_path)
+    return report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,12 +356,18 @@ def build_parser() -> argparse.ArgumentParser:
             selector.add_argument("--email", help="Select a unique email; omitted selectors prompt locally")
             if name in {"test-play-record", "test-like"}:
                 selector.add_argument("--rows", type=int, nargs="+", help="Test 1-5 prepared source rows sequentially")
+                selector.add_argument("--country", choices=("LB", "EG"), help="Run all enrolled accounts tagged with this country (no row limit)")
             if name in {"song", "probe-playback", "test-play-record", "test-like"}:
                 command.add_argument("--song-id", required=True)
             if name in {"login", "relations", "playlists", "test-play-record", "test-like"}:
                 command.add_argument("--proxy-egypt", action="store_true", help="Use the encrypted PacketStream credentials and verify an Egypt exit before Anghami requests")
             if name in {"test-play-record", "test-like"}:
                 command.add_argument("--count", type=_test_count, default=1, help="Sequential tests of this selected row and song (1-5; default 1)")
+            if name == "test-play-record":
+                command.add_argument("--with-heartbeats", action="store_true", help="Send /playqueue/create and progress beats before the play event (required for chart counting)")
+                command.add_argument("--workers", type=int, default=8, help="Parallel workers for multi-account runs (default 8)")
+                command.add_argument("--skip", type=int, default=0, help="Skip the first N accounts from the selected country (default 0)")
+                command.add_argument("--proxy-file", type=Path, default=None, help="Path to a txt file with one PacketStream proxy per line: user:auth_key@proxy.packetstream.io:31111 or exported user:auth_key[_country-XX_session-YY]:proxy.packetstream.io:31112")
             if name == "probe-playback":
                 command.add_argument("--seconds", type=float, default=5, help="Seconds of decoded audio to consume silently (1-30; default 5)")
             if name == "attach":
@@ -227,6 +414,7 @@ def main(argv: list[str] | None = None) -> int:
                     rows = _select_test_rows(vault, args) if args.command in {"test-play-record", "test-like"} else [_select(vault, args)]
                     row = rows[0]
                     proxy = load_packetstream_proxy(args.vault.parent / "packetstream.dpapi") if getattr(args, "proxy_egypt", False) else None
+                    proxies = _load_proxy_file(args.proxy_file) if getattr(args, "proxy_file", None) else None
                     if args.command == "login":
                         from .capture import capture_login
                         record = vault.record(row)
@@ -259,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif args.command == "probe-playback":
                         result = vault.probe_playback(row, args.song_id, seconds=args.seconds)
                     elif args.command == "test-play-record":
-                        result = _run_selected_tests(vault, args, rows, proxy)
+                        result = _run_selected_tests(vault, args, rows, proxy, proxies=proxies)
                     elif args.command == "test-like":
                         result = _run_selected_tests(vault, args, rows, proxy)
                     else:
@@ -282,7 +470,8 @@ def main(argv: list[str] | None = None) -> int:
     except (EOFError, KeyboardInterrupt):
         print("Account operation cancelled. Previously saved records were kept.", file=sys.stderr)
     except Exception as exc:
-        # Browser and transport tracebacks can contain passwords and session URLs.
+        import traceback
+        traceback.print_exc()
         print(f"Account operation failed ({type(exc).__name__}).", file=sys.stderr)
     return 1
 

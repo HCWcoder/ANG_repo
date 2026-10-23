@@ -258,7 +258,7 @@ def play_song(session, song_id, session_fingerprint, session_sid):
 		session_fingerprint, session_sid)
 
 	timestamp = int(dt.now().timestamp() * 1e3)
-	playsecs = round(float(song_data["duration"]) + random() / 1e2, 6)
+	playsecs = round(float(song_data["duration"]) * (0.92 + random() * 0.08), 6)
 
 	params = {
 		"output": "jsonhp",

@@ -349,13 +349,15 @@ def test_original_function_runs_once_with_saved_auth_and_pre_attempt_audit(saved
         assert options["timeout"] == 25
         assert options["allow_redirects"] is False
     base_headers = saved_session._template("relations")["headers"]
-    assert saved_session._http.calls[0][2]["headers"] == base_headers
+    metadata_headers = saved_session._http.calls[0][2]["headers"]
+    assert {k: v for k, v in metadata_headers.items() if k != "x-socket-id"} == base_headers
+    assert metadata_headers.get("x-socket-id") == SOCKET
     event_headers = saved_session._http.calls[1][2]["headers"]
     assert {key: value for key, value in event_headers.items() if key != "x-socket-id"} == base_headers
-    assert event_headers["x-socket-id"]
+    assert event_headers["x-socket-id"] == SOCKET
     event = saved_session._http.calls[1][1]
     assert event["songid"] == SONG_ID
-    assert 114.99 - 0.000001 <= float(event["playsecs"]) <= 115.0
+    assert 114.99 * 0.92 <= float(event["playsecs"]) <= 115.0
     assert event["playper"] == "1"
     assert str(int(event["localtimestamp"])) == event["localtimestamp"]
     assert report == safe_report(path)
@@ -622,9 +624,9 @@ def test_event_requests_match_observed_web_client_headers(saved_session, bootstr
     report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=path)
     assert report["passed"] is True
     metadata_call, event_call = (options for _, _, options in saved_session._http.calls)
-    assert metadata_call["headers"]["x-angh-udid"] == DEVICE_ID
-    assert "x-socket-id" not in metadata_call["headers"]
-    assert event_call["headers"]["x-angh-udid"] == DEVICE_ID
+    assert re.fullmatch(re.escape(DEVICE_ID) + r"_web_\d{7}", metadata_call["headers"]["x-angh-udid"])
+    assert metadata_call["headers"]["x-socket-id"] == SOCKET
+    assert re.fullmatch(re.escape(DEVICE_ID) + r"_web_\d{7}", event_call["headers"]["x-angh-udid"])
     assert event_call["headers"]["x-socket-id"] == SOCKET
     for _, params, _ in saved_session._http.calls:
         assert "web_medium" not in params
@@ -775,9 +777,9 @@ def test_heartbeats_stream_progress_before_event(saved_session, bootstrap, tmp_p
     saved_session._http.replies.extend([Reply(metadata()), Reply({"status": "ok"})])
     beats = []
 
-    def heartbeats(http, headers, *, sid, fingerprint, user_id, device_id, socket_id, song_duration, real_seconds, report):
+    def heartbeats(http, headers, *, sid, fingerprint, user_id, device_id, socket_id, song_id, song_duration, real_seconds, report):
         beats.append({"sid": sid, "user_id": user_id, "socket_id": socket_id,
-                      "song_duration": song_duration, "real_seconds": real_seconds})
+                      "song_id": song_id, "song_duration": song_duration, "real_seconds": real_seconds})
         report["heartbeats_sent"] = 4
         return 4
 
@@ -785,7 +787,7 @@ def test_heartbeats_stream_progress_before_event(saved_session, bootstrap, tmp_p
     report = play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_heartbeats=True)
     assert report["passed"] is True and report["heartbeats_sent"] == 4
     assert beats == [{"sid": SOCKET, "user_id": USER_ID, "socket_id": SOCKET,
-                      "song_duration": 114.99, "real_seconds": 114.99}]
+                      "song_id": SONG_ID, "song_duration": 114.99, "real_seconds": 114.99}]
     # One metadata request (replayed for the legacy function), then the event.
     assert [params["type"] for _, params, _ in saved_session._http.calls] == ["GETsong", "REGISTERwebplay"]
     assert saved_session._http.calls[1][1]["sid"] == SOCKET
@@ -799,7 +801,7 @@ def test_heartbeat_failure_blocks_event(saved_session, bootstrap, tmp_path, monk
         play_record.run_play_record_test(saved_session, SONG_ID, report_path=tmp_path / "audit.json", with_heartbeats=True)
     assert [params["type"] for _, params, _ in saved_session._http.calls] == ["GETsong"]
     report = json.loads((tmp_path / "audit.json").read_text())
-    assert report["event_attempted"] is False and report["failed_phase"] == "metadata"
+    assert report["event_attempted"] is False and report["failed_phase"] == "heartbeats"
 
 
 def test_heartbeats_require_user_id(saved_session, bootstrap, tmp_path):

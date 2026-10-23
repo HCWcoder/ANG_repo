@@ -18,7 +18,7 @@ from random import random
 import re
 import tempfile
 import time
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from uuid import uuid4
 
 from curl_cffi.const import CurlInfo
@@ -216,55 +216,111 @@ def _user_id_from_headers(headers: dict) -> str | None:
     return None
 
 
+PLAYQUEUE_CREATE_URL = "https://coussa.anghami.com/playqueue/create"
 PLAYQUEUE_MODIFY_URL = "https://coussa.anghami.com/playqueue/modify"
 
 
 def _send_play_heartbeats(http, headers, *, sid, fingerprint, user_id, device_id, socket_id,
-                          song_duration, real_seconds, report) -> int:
+                          song_id, song_duration, real_seconds, report) -> int:
     """Mirror the web client's playqueue progress sync during a play.
 
-    Every ~30s of claimed playback the page posts the advancing progress to
-    /playqueue/modify; the completion event only registers after this stream.
+    The web client first creates a queue via /playqueue/create, then posts
+    progress updates to /playqueue/modify every ~30 seconds. The first beat
+    fires ~1s after the song starts (progress=1); subsequent beats advance by
+    ~30s each. The completion event only registers after this stream.
     Heartbeats are best-effort: a failed beat is recorded, never retried and
     never blocks the play event.
     """
     beats = 0
-    interval = max(1.0, real_seconds / 4)
     queue_id = f"{user_id}-{uuid4()}"
-    progress = 0.0
-    while progress < real_seconds:
-        progress = min(real_seconds, progress + interval)
+
+    # The browser sends the base64-encoded fingerprint cookie value in URL params,
+    # not the raw UUID that gateway.php uses.
+    cookie_header = headers.get("cookie", "")
+    fp_cookie_match = re.search(r'(?:^|;)\s*fingerprint=([^;]+)', cookie_header)
+    fp_for_url = fp_cookie_match.group(1).strip() if fp_cookie_match else fingerprint
+
+    def _udid_suffix():
+        return (device_id + "_web_" + str(int(time.time()))[-7:]) if device_id is not None else None
+
+    def _auth_params(extra: dict | None = None) -> str:
+        udid = _udid_suffix()
+        params = {
+            "language": "en", "web2": "true", "lang": "en", "userlanguageprod": "en",
+            "output": "jsonhp", "fingerprint": fp_for_url,
+            "sid": sid, "appsid": sid,
+        }
+        if udid is not None:
+            params["x-angh-udid"] = udid
+        params["x-socket-id"] = socket_id
+        if extra:
+            params.update(extra)
+        return urlencode(params)
+
+    def _req_headers(udid: str | None) -> dict:
+        h = dict(headers)
+        h["content-type"] = "application/json"
+        h["x-socket-id"] = socket_id
+        if udid is not None:
+            h["x-angh-udid"] = udid
+        return h
+
+    # Create the playqueue before sending any progress updates.
+    udid_create = _udid_suffix()
+    queue_obj = json.dumps({
+        "playlist": None, "platform": "web", "devicename": "Chrome 154",
+        "type": "songbased", "videoOn": False, "skipad": False,
+        "disableskiplimit": False, "repeatOn": False, "index": 0,
+        "playing": False, "timestamp": str(int(time.time() * 1e3)),
+        "progress": 0, "songs": str(song_id),
+        "shuffleOn": False, "shuffledSongs": None, "album": None,
+    }, separators=(",", ":"))
+    create_body = {"output": "jsonhp", "x-socket-id": socket_id, "queue": queue_obj}
+    if udid_create is not None:
+        create_body["x-angh-udid"] = udid_create
+        create_body["udid"] = udid_create
+    create_url = PLAYQUEUE_CREATE_URL + "?" + _auth_params()
+    try:
+        resp = measured_request(http, "post", create_url,
+                                json=create_body, headers=_req_headers(udid_create),
+                                timeout=25, allow_redirects=False)
+        close = getattr(resp, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+    except Exception:
+        report["heartbeats_sent"] = 0
+        return 0
+
+    def _send_beat(progress_secs: float) -> bool:
+        nonlocal beats
+        beat_udid = _udid_suffix()
         queuediff = json.dumps({
             "index": 0, "playing": True, "repeatOn": False,
-            "shuffleOn": False, "videoOn": False, "progress": round(progress, 6),
+            "shuffleOn": False, "videoOn": False, "progress": round(progress_secs, 6),
         }, separators=(",", ":"))
-        payload = {
+        beat_body = {
             "queuediff": queuediff, "playqueueid": queue_id,
             "x-socket-id": socket_id, "output": "jsonhp",
         }
-        if device_id is not None:
-            payload["x-angh-udid"] = device_id + "_web_" + str(int(time.time()))[-7:]
-        params = {
-            "language": "en", "lang": "en", "web2": "true", "userlanguageprod": "en",
-            "fingerprint": fingerprint, "sid": sid, "appsid": sid,
-            "queuediff": queuediff, "playqueueid": queue_id, "x-socket-id": socket_id,
-        }
-        if device_id is not None:
-            params["x-angh-udid"] = payload["x-angh-udid"]
-        request_headers = dict(headers)
-        request_headers["content-type"] = "application/json"
-        if device_id is not None:
-            request_headers["x-angh-udid"] = payload["x-angh-udid"]
-        request_headers["x-socket-id"] = socket_id
+        if beat_udid is not None:
+            beat_body["x-angh-udid"] = beat_udid
+        modify_url = PLAYQUEUE_MODIFY_URL + "?" + _auth_params({
+            "queuediff": queuediff, "playqueueid": queue_id,
+        })
         response = None
         try:
-            response = measured_request(http, "post", PLAYQUEUE_MODIFY_URL,
-                                        params=params, json=payload, headers=request_headers,
+            response = measured_request(http, "post", modify_url,
+                                        json=beat_body, headers=_req_headers(beat_udid),
                                         timeout=25, allow_redirects=False)
             if getattr(response, "status_code", None) == 200:
                 beats += 1
+                return True
+            return False
         except Exception:
-            break
+            return False
         finally:
             close = getattr(response, "close", None)
             if callable(close):
@@ -272,6 +328,21 @@ def _send_play_heartbeats(http, headers, *, sid, fingerprint, user_id, device_id
                     close()
                 except Exception:
                     pass
+
+    # Initial beat fires ~1s after song starts with progress=1.
+    time.sleep(1.0)
+    if not _send_beat(1.0):
+        report["heartbeats_sent"] = beats
+        return beats
+
+    # Subsequent beats every 30 seconds until real_seconds is covered.
+    progress = 1.0
+    while progress < real_seconds - 1.0:
+        time.sleep(30.0)
+        progress = min(real_seconds, progress + 30.0)
+        if not _send_beat(progress):
+            break
+
     report["heartbeats_sent"] = beats
     return beats
 
@@ -375,7 +446,7 @@ class _LegacyAdapter:
                     claimed_seconds = float(params["playsecs"])
                 except (KeyError, TypeError, ValueError):
                     raise _Failure("legacy_claim_invalid", "The original play function produced an unsupported synthetic duration.") from None
-                if not math.isfinite(claimed_seconds) or not self.duration - 0.000001 <= claimed_seconds <= self.duration + 0.01:
+                if not math.isfinite(claimed_seconds) or not self.duration * 0.90 <= claimed_seconds <= self.duration + 0.01:
                     raise _Failure("legacy_claim_invalid", "The original play function produced an unsupported synthetic duration.")
             if not wait_before_provider_request("song_metadata"):
                 raise RequestFailure("request_rate_limited", stage="song_metadata", http_status=429, retry_after_seconds=121, retry_safe=False)
@@ -389,10 +460,10 @@ class _LegacyAdapter:
             _journal(self.report, self.report_path)
         response = None
         try:
-            # Match the observed web client: it sends no web_medium parameter,
-            # carries the device UUID on both requests, and adds the page's
-            # socket identifier to the play event.
-            outgoing = {name: value for name, value in params.items() if name != "web_medium"}
+            # The real web client's REGISTERwebplay omits web_medium and angh_type.
+            # GETsong keeps angh_type; REGISTERwebplay does not include it.
+            _strip = {"web_medium"} if operation == "GETsong" else {"web_medium", "angh_type"}
+            outgoing = {name: value for name, value in params.items() if name not in _strip}
             if operation == "REGISTERwebplay":
                 if self.claimed_override is not None:
                     outgoing["playsecs"] = str(round(self.claimed_override, 6))
@@ -400,9 +471,10 @@ class _LegacyAdapter:
                     outgoing["sid"] = outgoing["appsid"] = self.event_sid
             request_headers = dict(self.headers)
             if self.device_id is not None:
-                request_headers["x-angh-udid"] = self.device_id
-            if operation == "REGISTERwebplay":
-                request_headers["x-socket-id"] = self.socket_id
+                # Append the _web_NNNNNNN timestamp suffix the browser adds to the stored UUID.
+                request_headers["x-angh-udid"] = self.device_id + "_web_" + str(int(time.time()))[-7:]
+            # Both GETsong and REGISTERwebplay carry x-socket-id.
+            request_headers["x-socket-id"] = self.socket_id
             response = measured_request(self.http, "get",
                 GATEWAY_URL, params=outgoing, headers=request_headers,
                 timeout=25, allow_redirects=False,
@@ -621,11 +693,12 @@ def run_play_record_test(session, song_id, *, report_path=None, declared_song_id
             functions["get_song"](adapter, song_id, fingerprint, sid)
             if adapter.duration is None:
                 raise _Failure("metadata_invalid", "The test song metadata did not contain the expected identity and a valid duration.")
+            report["phase"] = "heartbeats"
             claimed = adapter.claimed_override if adapter.claimed_override is not None else adapter.duration
             _send_play_heartbeats(http, headers, sid=socket, fingerprint=fingerprint,
                                   user_id=user_id, device_id=adapter.device_id, socket_id=socket,
-                                  song_duration=adapter.duration, real_seconds=claimed,
-                                  report=report)
+                                  song_id=song_id, song_duration=adapter.duration,
+                                  real_seconds=claimed, report=report)
             if report["heartbeats_sent"] < 1:
                 raise _Failure("heartbeat_failed", "The playqueue progress sync did not reach the gateway. The play event was not sent.")
             adapter.skip_legacy_metadata = True
